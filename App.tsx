@@ -143,38 +143,32 @@ function App() {
     localStorage.removeItem('gol_current_user');
   };
 
-  // --- LÓGICA DE SCANNER ---
+  // --- LÓGICA DE REGISTRO E SCANNER ---
   const cleanScanCode = (input: string): string => {
     const numericOnly = input.replace(/\D/g, ''); 
+    // Se for muito longo, pega os últimos 9 dígitos, mas permite menor para validação manual
     return numericOnly.length > 9 ? numericOnly.slice(-9) : numericOnly;
   };
 
-  useEffect(() => {
-    const rawInput = scanInput.trim();
-    if (!rawInput) return;
-    const code = cleanScanCode(rawInput);
-    if (code.length === 9) {
-      const isRTA = code.startsWith('100') || code.startsWith('101');
-      const isFAR = code.startsWith('200');
-      if (isRTA || isFAR) {
-        const timer = setTimeout(() => registerDocument(code), 300);
-        return () => clearTimeout(timer);
-      }
-    }
-  }, [scanInput]);
-
   const registerDocument = (code: string) => {
-    const existing = documents.find(d => d.id === code);
+    const cleanCode = cleanScanCode(code);
+    
+    // Validação básica para evitar lixo
+    if (cleanCode.length < 5) return false;
+
+    const existing = documents.find(d => d.id === cleanCode);
     if (existing) {
+       // Se já existe, apenas foca na busca
        setScanInput(''); 
-       setSearchTerm(code); 
-       return;
+       setSearchTerm(cleanCode); 
+       // Feedback visual se possível (shake effect ou toast - simplificado aqui)
+       return true; // Retorna true para sinalizar que "processou"
     }
 
-    let docType = code.startsWith('200') ? 'FAR' : 'RTA';
+    let docType = cleanCode.startsWith('200') ? 'FAR' : 'RTA';
 
     const newDoc: DocumentItem = {
-      id: code,
+      id: cleanCode,
       type: docType,
       status: DocStatus.CONFERENCE,
       hasErrors: false,
@@ -190,7 +184,25 @@ function App() {
 
     setDocuments(prev => [newDoc, ...prev]);
     setScanInput(''); 
+    return true;
   };
+
+  // Monitora input manual (scanner de mão USB ou digitação)
+  useEffect(() => {
+    const rawInput = scanInput.trim();
+    if (!rawInput) return;
+    
+    // Tenta identificar padrões automaticamente enquanto digita
+    const code = cleanScanCode(rawInput);
+    if (code.length === 9) {
+      const isRTA = code.startsWith('100') || code.startsWith('101');
+      const isFAR = code.startsWith('200');
+      if (isRTA || isFAR) {
+        const timer = setTimeout(() => registerDocument(code), 300);
+        return () => clearTimeout(timer);
+      }
+    }
+  }, [scanInput]);
 
   // --- CÂMERA ---
   const startCamera = async () => {
@@ -202,9 +214,11 @@ function App() {
       });
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
+        // Importante para iOS não bloquear o play
+        videoRef.current.setAttribute('playsinline', 'true');
       }
     } catch (err) {
-      setCameraError('Erro ao acessar a câmera. Verifique permissões.');
+      setCameraError('Erro ao acessar a câmera. Verifique permissões no navegador.');
       console.error(err);
     }
   };
@@ -220,6 +234,8 @@ function App() {
   const captureAndAnalyze = async () => {
     if (!videoRef.current) return;
     setIsCameraLoading(true);
+    setCameraError(''); // Limpa erros anteriores
+    
     try {
       const canvas = document.createElement('canvas');
       canvas.width = videoRef.current.videoWidth;
@@ -228,16 +244,27 @@ function App() {
       if (ctx) {
         ctx.drawImage(videoRef.current, 0, 0);
         const base64 = canvas.toDataURL('image/jpeg');
+        
         const code = await extractDataFromImage(base64);
+        
         if (code) {
-          setScanInput(code); 
-          stopCamera();
+          // SUCESSO! Inserir automaticamente.
+          if (navigator.vibrate) navigator.vibrate(200); // Feedback tátil
+          
+          const registered = registerDocument(code);
+          
+          if (registered) {
+             stopCamera();
+             // Opcional: Adicionar um Toast de sucesso aqui se tivesse componente de Toast
+          } else {
+             setCameraError(`Código lido (${code}) parece inválido.`);
+          }
         } else {
-          setCameraError('Não foi possível identificar um número válido.');
+          setCameraError('Nenhum código válido identificado na imagem. Tente aproximar.');
         }
       }
     } catch (err) {
-      setCameraError('Erro ao processar imagem.');
+      setCameraError('Erro técnico ao processar imagem.');
     } finally {
       setIsCameraLoading(false);
     }
@@ -617,7 +644,8 @@ function App() {
             </button>
           </div>
           <div className="w-full h-full relative flex items-center justify-center bg-black">
-            <video ref={videoRef} autoPlay playsInline className="max-w-full max-h-full object-cover opacity-90" />
+            {/* Added playsInline and muted for iOS compatibility */}
+            <video ref={videoRef} autoPlay playsInline muted className="max-w-full max-h-full object-cover opacity-90" />
             
             {/* Overlay de Scan */}
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
@@ -649,14 +677,16 @@ function App() {
               </div>
             )}
             <p className="text-white/80 text-sm bg-black/40 px-4 py-2 rounded-full backdrop-blur-md border border-white/10">
-              Aponte para o código de barras ou número WO
+              Aponte para o documento e toque no botão central
             </p>
             <button 
               onClick={captureAndAnalyze}
               disabled={isCameraLoading}
               className="w-20 h-20 rounded-full bg-white border-4 border-zinc-200 flex items-center justify-center shadow-2xl active:scale-95 transition-transform hover:border-orange-500 group"
             >
-              <div className="w-16 h-16 bg-orange-600 rounded-full group-hover:scale-90 transition-transform"></div>
+              <div className="w-16 h-16 bg-orange-600 rounded-full group-hover:scale-90 transition-transform flex items-center justify-center">
+                 <Camera className="w-8 h-8 text-white" />
+              </div>
             </button>
           </div>
         </div>

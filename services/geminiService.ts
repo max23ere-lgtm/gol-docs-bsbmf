@@ -65,18 +65,30 @@ export const extractDataFromImage = async (base64Image: string): Promise<string 
             },
           },
           {
-            text: `Analyze this image. Find the main barcode number, Work Order (WO) number, or document ID. It usually has 9 digits. Return ONLY the number digits. If multiple, return the most prominent one. If none found, return "null".`,
+            text: `Extract the main numeric identifier from this image (Barcode or Text). 
+            It is a Maintenance Work Order. 
+            Rules:
+            1. Look for a 9-digit number starting with 100, 101, or 200.
+            2. Ignore dates or small labels.
+            3. Return ONLY the digits. No text like "WO:" or "Barcode:".
+            4. If multiple numbers exist, prefer the one starting with 100, 101, or 200.
+            5. If absolutely no valid number is found, return "null".`,
           },
         ],
       },
     });
 
     const text = response.text?.trim();
-    if (!text || text.toLowerCase() === 'null') return null;
+    if (!text || text.toLowerCase().includes('null')) return null;
     
-    // Clean up result, keep only numbers if it looks like a barcode
+    // Clean up result, keep only numbers
     const numbers = text.replace(/\D/g, '');
-    return numbers.length > 5 ? numbers : text;
+    
+    // Validar se parece um documento real
+    if (numbers.length >= 5) {
+        return numbers;
+    }
+    return null;
 
   } catch (error) {
     console.error("Gemini Extraction Error:", error);
