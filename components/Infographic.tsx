@@ -111,7 +111,7 @@ export const Infographic: React.FC<InfographicProps> = ({ documents, onFilterSta
             </div>
             <div className="text-right">
               <span className="text-2xl font-black text-gray-800 dark:text-white block leading-none">{total}</span>
-              <span className="text-[10px] text-gray-400 dark:text-zinc-600 font-bold uppercase">Total Docs</span>
+              <span className="text-xs text-gray-400 dark:text-zinc-600 font-bold uppercase">Total Docs</span>
             </div>
          </div>
 
@@ -159,15 +159,21 @@ export const Infographic: React.FC<InfographicProps> = ({ documents, onFilterSta
                  <span className="text-xs text-zinc-400">Total Processado</span>
                  <span className="text-2xl font-black">{total}</span>
               </div>
-              <div className="flex justify-between items-end border-b border-white/10 pb-2">
-                 <span className="text-xs text-zinc-400">Pendente Correção</span>
+              <div 
+                onClick={() => onFilterStatus(activeFilter === DocStatus.RETURN ? null : DocStatus.RETURN)}
+                className={`flex justify-between items-end border-b border-white/10 pb-2 cursor-pointer transition-all ${activeFilter === DocStatus.RETURN ? 'bg-white/10 px-2 -mx-2 rounded' : 'hover:bg-white/5'}`}
+              >
+                 <span className={`text-xs ${activeFilter === DocStatus.RETURN ? 'text-white' : 'text-zinc-400'}`}>Pendente Correção</span>
                  <span className={`text-xl font-bold ${errors > 0 ? 'text-red-400' : 'text-green-400'}`}>{errors}</span>
               </div>
            </div>
          </div>
 
          <div className="mt-auto relative z-10">
-            <div className={`p-4 rounded-2xl border flex items-center gap-3 backdrop-blur-md transition-colors ${errors > 0 ? 'bg-red-500/10 border-red-500/20 text-red-200' : 'bg-green-500/10 border-green-500/20 text-green-200'}`}>
+            <div 
+              onClick={() => onFilterStatus(activeFilter === DocStatus.RETURN ? null : DocStatus.RETURN)}
+              className={`p-4 rounded-2xl border flex items-center gap-3 backdrop-blur-md transition-all cursor-pointer hover:scale-105 active:scale-95 ${activeFilter === DocStatus.RETURN ? 'ring-2 ring-orange-500 shadow-lg shadow-orange-500/20' : ''} ${errors > 0 ? 'bg-red-500/10 border-red-500/20 text-red-200 hover:bg-red-500/20' : 'bg-green-500/10 border-green-500/20 text-green-200 hover:bg-green-500/20'}`}
+            >
                {errors > 0 ? <AlertCircle className="w-6 h-6 shrink-0"/> : <CheckCircle2 className="w-6 h-6 shrink-0"/>}
                <div>
                  <p className="text-sm font-bold leading-none mb-1">{errors > 0 ? 'Ação Requerida' : 'Operação Estável'}</p>
