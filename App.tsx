@@ -22,7 +22,9 @@ import {
   RefreshCw,
   Loader2,
   Database,
-  Lock
+  Lock,
+  Settings,
+  Save
 } from 'lucide-react';
 import { DocumentItem, DocStatus, DocLog, STATUS_LABELS, STATUS_COLORS } from './types';
 import { StatusBadge } from './components/StatusBadge';
@@ -46,11 +48,17 @@ function App() {
   const [isLoading, setIsLoading] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncError, setSyncError] = useState(false);
+  const [isSupabaseConfigured, setIsSupabaseConfigured] = useState(false);
   
   const [scanInput, setScanInput] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const [viewingLogsDocId, setViewingLogsDocId] = useState<string | null>(null);
   
+  // Settings Modal State
+  const [showSettings, setShowSettings] = useState(false);
+  const [configUrl, setConfigUrl] = useState('');
+  const [configKey, setConfigKey] = useState('');
+
   // Filters
   const [dateStart, setDateStart] = useState('');
   const [dateEnd, setDateEnd] = useState('');
@@ -63,6 +71,7 @@ function App() {
       const data = await dbService.fetchDocuments();
       setDocuments(data);
       setSyncError(false);
+      setIsSupabaseConfigured(dbService.isSupabaseConfigured());
     } catch (err) {
       setSyncError(true);
     } finally {
@@ -75,7 +84,6 @@ function App() {
   }, []);
 
   // 2. SINCRONIZAÇÃO AUTOMÁTICA (SALVAMENTO)
-  // Usamos um ref para evitar que o salvamento automático ocorra logo no primeiro carregamento
   const dataLoaded = useRef(false);
   useEffect(() => {
     if (isLoading) return;
@@ -99,14 +107,11 @@ function App() {
   // Login Handlers
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
-    
-    // Validação de Senha
     if (loginPasswordInput !== SHARED_ACCESS_KEY) {
-      alert("Senha de acesso incorreta. Solicite a credencial da equipe de Manutenção.");
-      setLoginPasswordInput(''); // Limpa a senha errada
+      alert("Senha de acesso incorreta.");
+      setLoginPasswordInput('');
       return;
     }
-
     if (loginNameInput.trim().length > 2) {
       const name = loginNameInput.trim();
       setCurrentUser(name);
@@ -116,8 +121,21 @@ function App() {
 
   const handleLogout = () => {
     setCurrentUser(null);
-    setLoginPasswordInput(''); // Limpa senha ao sair
+    setLoginPasswordInput('');
     localStorage.removeItem('gol_current_user');
+  };
+
+  // Settings Handlers
+  const handleSaveConfig = (e: React.FormEvent) => {
+    e.preventDefault();
+    dbService.saveCredentials(configUrl, configKey);
+    setShowSettings(false);
+  };
+
+  const handleClearConfig = () => {
+    if(confirm('Isso desconectará o banco de dados. Deseja continuar?')) {
+      dbService.clearCredentials();
+    }
   };
 
   // Logic for scan and registration
@@ -232,7 +250,6 @@ function App() {
     let matchesStatus = true;
     if (statusFilter) {
       if (statusFilter === DocStatus.SHIPPING) {
-        // Exibe tanto em envio quanto concluídos no filtro de funil
         matchesStatus = doc.status === DocStatus.SHIPPING || doc.status === DocStatus.COMPLETED;
       } else {
         matchesStatus = doc.status === statusFilter;
@@ -246,7 +263,6 @@ function App() {
       <div className="min-h-screen bg-gray-100 flex flex-col items-center justify-center p-4">
         <Loader2 className="w-12 h-12 text-orange-500 animate-spin mb-4" />
         <h2 className="text-xl font-bold text-gray-800">Sincronizando Base GOL...</h2>
-        <p className="text-gray-500">Buscando as últimas atualizações da equipe.</p>
       </div>
     );
   }
@@ -258,47 +274,23 @@ function App() {
            <img src="https://i.imgur.com/7XiGPwH.png" alt="GOL" className="h-16 mx-auto mb-6" />
             <h2 className="text-2xl font-bold text-gray-800 mb-2">GOL DOCS BSB</h2>
             <p className="text-gray-500 mb-6 font-medium">Controle de Documentação Centralizado</p>
-            
             <form onSubmit={handleLogin} className="space-y-4">
-              
-              {/* Campo Nome */}
               <div className="text-left">
                 <label className="block text-xs font-bold text-gray-500 uppercase mb-1 ml-1">Colaborador</label>
                 <div className="relative">
                   <User className="absolute left-3 top-3 text-gray-400 w-5 h-5" />
-                  <input 
-                    type="text" 
-                    value={loginNameInput}
-                    onChange={(e) => setLoginNameInput(e.target.value)}
-                    className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 outline-none font-medium text-gray-800"
-                    placeholder="Nome Completo"
-                    required
-                  />
+                  <input type="text" value={loginNameInput} onChange={(e) => setLoginNameInput(e.target.value)} className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 outline-none font-medium text-gray-800" placeholder="Nome Completo" required />
                 </div>
               </div>
-
-              {/* Campo Senha */}
               <div className="text-left">
                 <label className="block text-xs font-bold text-gray-500 uppercase mb-1 ml-1">Senha de Acesso</label>
                 <div className="relative">
                   <Lock className="absolute left-3 top-3 text-gray-400 w-5 h-5" />
-                  <input 
-                    type="password" 
-                    value={loginPasswordInput}
-                    onChange={(e) => setLoginPasswordInput(e.target.value)}
-                    className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 outline-none font-medium text-gray-800"
-                    placeholder="Senha da Equipe"
-                    required
-                  />
+                  <input type="password" value={loginPasswordInput} onChange={(e) => setLoginPasswordInput(e.target.value)} className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 outline-none font-medium text-gray-800" placeholder="Senha da Equipe" required />
                 </div>
               </div>
-
-              <button type="submit" className="w-full bg-orange-500 text-white font-bold py-3 rounded-lg hover:bg-orange-600 transition shadow-lg shadow-orange-200 mt-2">
-                Acessar Base de Dados
-              </button>
+              <button type="submit" className="w-full bg-orange-500 text-white font-bold py-3 rounded-lg hover:bg-orange-600 transition shadow-lg shadow-orange-200 mt-2">Acessar Base de Dados</button>
             </form>
-            
-            <p className="mt-4 text-xs text-gray-400">Área restrita à manutenção GOL BSB</p>
         </div>
       </div>
     );
@@ -310,19 +302,18 @@ function App() {
         <div className="max-w-7xl mx-auto px-4 py-3 flex justify-between items-center">
           <div className="flex items-center gap-4 sm:gap-6">
             <img src="https://i.imgur.com/7XiGPwH.png" alt="GOL" className="h-10 w-auto object-contain" />
-            <div className="h-8 w-px bg-gray-200 hidden sm:block"></div>
             <div className="hidden xs:block">
               <h1 className="text-lg font-bold text-gray-800 leading-none">BSB DOCS</h1>
               <div className="flex items-center gap-1.5 mt-1">
                  {isSyncing ? (
                    <RefreshCw className="w-3 h-3 text-blue-500 animate-spin" />
-                 ) : syncError ? (
+                 ) : syncError || !isSupabaseConfigured ? (
                    <CloudOff className="w-3 h-3 text-red-500" />
                  ) : (
                    <CloudCheck className="w-3 h-3 text-green-500" />
                  )}
-                 <span className={`text-[9px] font-extrabold uppercase ${syncError ? 'text-red-500' : 'text-gray-400'}`}>
-                   {isSyncing ? 'Salvando Alterações...' : syncError ? 'Erro ao Sincronizar' : 'Base em Nuvem Conectada'}
+                 <span className={`text-[9px] font-extrabold uppercase ${syncError || !isSupabaseConfigured ? 'text-red-500' : 'text-gray-400'}`}>
+                   {isSyncing ? 'Salvando...' : !isSupabaseConfigured ? 'Banco Não Configurado' : 'Conectado'}
                  </span>
               </div>
             </div>
@@ -330,12 +321,16 @@ function App() {
 
           <div className="flex items-center gap-2 sm:gap-4">
             <button 
-              onClick={() => loadData()} 
-              className="flex items-center gap-2 px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-lg text-xs font-bold transition border border-gray-200"
-              title="Atualizar dados de outros usuários"
+              onClick={() => setShowSettings(true)}
+              className={`p-2 rounded-full transition ${!isSupabaseConfigured ? 'bg-red-100 text-red-600 animate-pulse' : 'text-gray-400 hover:bg-gray-100'}`}
+              title="Configurar Banco de Dados"
             >
+              <Settings className="w-5 h-5" />
+            </button>
+
+            <button onClick={() => loadData()} className="flex items-center gap-2 px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-lg text-xs font-bold transition border border-gray-200" title="Atualizar">
               <RefreshCw className={`w-3 h-3 ${isLoading ? 'animate-spin' : ''}`} />
-              <span className="hidden sm:inline">Atualizar Base</span>
+              <span className="hidden sm:inline">Atualizar</span>
             </button>
 
             <div className="flex items-center gap-2 bg-orange-50 px-3 py-1.5 rounded-full border border-orange-100">
@@ -343,7 +338,7 @@ function App() {
               <span className="text-xs font-bold text-orange-700 max-w-[80px] sm:max-w-none truncate">{currentUser}</span>
             </div>
             
-            <button onClick={handleLogout} className="text-gray-400 hover:text-red-500 transition" title="Sair do Sistema">
+            <button onClick={handleLogout} className="text-gray-400 hover:text-red-500 transition" title="Sair">
               <LogOut className="w-5 h-5" />
             </button>
           </div>
@@ -351,6 +346,17 @@ function App() {
       </header>
 
       <main className="flex-1 max-w-7xl mx-auto w-full p-4 md:p-6 space-y-6">
+        {/* Aviso se não estiver configurado */}
+        {!isSupabaseConfigured && (
+          <div className="bg-red-50 border border-red-200 rounded-lg p-4 flex items-center gap-3 text-red-800">
+            <AlertCircle className="w-6 h-6 flex-shrink-0" />
+            <div className="flex-1">
+              <h3 className="font-bold text-sm">Banco de dados desconectado</h3>
+              <p className="text-xs mt-1">Clique na engrenagem acima e insira as credenciais do Supabase para salvar os dados na nuvem.</p>
+            </div>
+          </div>
+        )}
+
         <Infographic documents={documents} activeFilter={statusFilter} onFilterStatus={setStatusFilter} />
 
         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 flex flex-col lg:flex-row gap-6 items-start lg:items-center justify-between">
@@ -358,14 +364,7 @@ function App() {
             <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5 ml-1">Leitor de Documento (RTA/FAR)</label>
             <div className="relative group">
               <Barcode className="absolute left-3 top-3.5 h-5 w-5 text-gray-400 group-focus-within:text-orange-500 transition-colors" />
-              <input
-                type="text"
-                autoFocus
-                value={scanInput}
-                onChange={(e) => setScanInput(e.target.value)}
-                className="block w-full pl-10 pr-3 py-3 border-2 border-gray-200 rounded-xl bg-gray-50 placeholder-gray-400 focus:outline-none focus:bg-white focus:border-orange-500 sm:text-lg transition-all font-mono"
-                placeholder="Escaneie o código de barras..."
-              />
+              <input type="text" autoFocus value={scanInput} onChange={(e) => setScanInput(e.target.value)} className="block w-full pl-10 pr-3 py-3 border-2 border-gray-200 rounded-xl bg-gray-50 placeholder-gray-400 focus:outline-none focus:bg-white focus:border-orange-500 sm:text-lg transition-all font-mono" placeholder="Escaneie o código de barras..." />
               <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">
                  <ShieldCheck className="w-4 h-4 text-green-500 mr-2" />
                  <span className="text-[10px] font-bold bg-white text-gray-500 px-2 py-1 rounded-lg border shadow-sm">9 DÍGITOS</span>
@@ -388,17 +387,9 @@ function App() {
               <label className="block text-xs font-bold text-gray-400 uppercase mb-1 ml-1">Busca Global</label>
               <div className="relative">
                 <Filter className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
-                <input 
-                  type="text" 
-                  value={searchTerm} 
-                  onChange={(e) => setSearchTerm(e.target.value)} 
-                  className="block w-full pl-9 pr-3 py-2.5 border border-gray-200 rounded-lg bg-white focus:ring-2 focus:ring-orange-500 outline-none text-sm font-medium" 
-                  placeholder="Código, status ou colaborador..." 
-                />
+                <input type="text" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="block w-full pl-9 pr-3 py-2.5 border border-gray-200 rounded-lg bg-white focus:ring-2 focus:ring-orange-500 outline-none text-sm font-medium" placeholder="Código, status ou colaborador..." />
                 {statusFilter && (
-                  <button onClick={() => setStatusFilter(null)} className="absolute inset-y-0 right-2 flex items-center text-[10px] text-orange-600 font-black hover:underline uppercase tracking-tighter">
-                    Limpar Filtro
-                  </button>
+                  <button onClick={() => setStatusFilter(null)} className="absolute inset-y-0 right-2 flex items-center text-[10px] text-orange-600 font-black hover:underline uppercase tracking-tighter">Limpar Filtro</button>
                 )}
               </div>
             </div>
@@ -417,14 +408,7 @@ function App() {
               </div>
             </div>
             <div className="flex items-center gap-2">
-              {statusFilter && (
-                <span className="bg-orange-600 text-white text-[10px] font-black px-3 py-1.5 rounded-full shadow-sm uppercase">
-                  Exibindo: {STATUS_LABELS[statusFilter]} {statusFilter === DocStatus.SHIPPING ? '+ CONCLUÍDOS' : ''}
-                </span>
-              )}
-              <span className="text-xs font-black text-gray-400 bg-white border border-gray-200 px-3 py-1.5 rounded-full shadow-sm">
-                {filteredDocs.length} REGISTROS
-              </span>
+              <span className="text-xs font-black text-gray-400 bg-white border border-gray-200 px-3 py-1.5 rounded-full shadow-sm">{filteredDocs.length} REGISTROS</span>
             </div>
           </div>
 
@@ -453,7 +437,7 @@ function App() {
                           </div>
                           <div className="ml-4">
                             <div className="text-sm font-black text-gray-900 group-hover:text-orange-600 transition-colors">{doc.id}</div>
-                            <div className="text-[10px] font-bold text-gray-400">{new Date(doc.createdAt).toLocaleDateString()} {new Date(doc.createdAt).toLocaleTimeString()}</div>
+                            <div className="text-[10px] font-bold text-gray-400">{new Date(doc.createdAt).toLocaleDateString()}</div>
                           </div>
                         </div>
                       </td>
@@ -465,9 +449,7 @@ function App() {
                       </td>
                       <td className="px-6 py-5 whitespace-nowrap">
                         <span className="text-xs font-bold text-gray-600 flex items-center gap-2">
-                          <div className="w-6 h-6 rounded-full bg-gray-100 flex items-center justify-center text-[10px] text-gray-500 border border-gray-200">
-                            {doc.createdBy.charAt(0).toUpperCase()}
-                          </div>
+                          <div className="w-6 h-6 rounded-full bg-gray-100 flex items-center justify-center text-[10px] text-gray-500 border border-gray-200">{doc.createdBy.charAt(0).toUpperCase()}</div>
                           {doc.createdBy}
                         </span>
                       </td>
@@ -478,16 +460,12 @@ function App() {
                         <div className="flex items-center gap-2">
                            {doc.status === DocStatus.CONFERENCE && (
                              <>
-                              <button onClick={() => toggleError(doc.id)} className={`px-3 py-2 rounded-xl border-2 text-[10px] font-black uppercase transition-all ${doc.hasErrors ? 'bg-red-600 text-white border-red-600' : 'bg-white text-gray-500 border-gray-100 hover:border-red-500 hover:text-red-600 shadow-sm'}`}>
-                                {doc.hasErrors ? 'ERRO ATIVO' : 'RELATAR ERRO'}
-                              </button>
+                              <button onClick={() => toggleError(doc.id)} className={`px-3 py-2 rounded-xl border-2 text-[10px] font-black uppercase transition-all ${doc.hasErrors ? 'bg-red-600 text-white border-red-600' : 'bg-white text-gray-500 border-gray-100 hover:border-red-500 hover:text-red-600 shadow-sm'}`}>{doc.hasErrors ? 'ERRO ATIVO' : 'RELATAR ERRO'}</button>
                               {!doc.hasErrors && <button onClick={() => updateStatus(doc.id, DocStatus.SCANNER)} className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-xl text-[10px] font-black uppercase hover:bg-indigo-700 shadow-lg shadow-indigo-100">LIBERAR <ArrowRight className="w-3 h-3" /></button>}
                              </>
                            )}
                            {doc.status === DocStatus.RETURN && (
-                             <button onClick={() => { toggleError(doc.id); updateStatus(doc.id, DocStatus.CONFERENCE); }} className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-xl text-[10px] font-black uppercase hover:bg-green-700 shadow-lg shadow-green-100">
-                               <CheckCircle2 className="w-3 h-3" /> CONFIRMAR CORREÇÃO
-                             </button>
+                             <button onClick={() => { toggleError(doc.id); updateStatus(doc.id, DocStatus.CONFERENCE); }} className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-xl text-[10px] font-black uppercase hover:bg-green-700 shadow-lg shadow-green-100"><CheckCircle2 className="w-3 h-3" /> CONFIRMAR CORREÇÃO</button>
                            )}
                            {doc.status === DocStatus.SCANNER && (
                              <button onClick={() => updateStatus(doc.id, DocStatus.ACCEPTANCE)} className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-xl text-[10px] font-black uppercase hover:bg-purple-700 shadow-lg shadow-purple-100">DIGITALIZADO <ArrowRight className="w-3 h-3" /></button>
@@ -499,18 +477,14 @@ function App() {
                              <button onClick={() => updateStatus(doc.id, DocStatus.COMPLETED)} className="flex items-center gap-2 px-4 py-2 bg-orange-600 text-white rounded-xl text-[10px] font-black uppercase hover:bg-orange-700 shadow-lg shadow-orange-100">FINALIZAR C.I. <CheckCircle2 className="w-3 h-3" /></button>
                            )}
                            {doc.status === DocStatus.COMPLETED && (
-                             <div className="flex items-center gap-1.5 text-green-600 font-black text-[10px] uppercase bg-green-50 px-3 py-2 rounded-xl border border-green-100">
-                               <CheckCircle2 className="w-3 h-3" /> Processo Encerrado
-                             </div>
+                             <div className="flex items-center gap-1.5 text-green-600 font-black text-[10px] uppercase bg-green-50 px-3 py-2 rounded-xl border border-green-100"><CheckCircle2 className="w-3 h-3" /> Processo Encerrado</div>
                            )}
                         </div>
                       </td>
                       <td className="px-6 py-5 whitespace-nowrap text-right">
                         <div className="flex items-center gap-2 justify-end">
-                           <button onClick={() => setViewingLogsDocId(doc.id)} className="p-2.5 text-blue-500 hover:bg-blue-50 rounded-xl border border-transparent hover:border-blue-200 transition-all" title="Ver Histórico/Logs">
-                             <History className="w-4 h-4" />
-                           </button>
-                          <button onClick={() => deleteDocument(doc.id)} className="p-2.5 text-gray-300 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all" title="Excluir da Base Central"><Trash2 className="w-4 h-4" /></button>
+                           <button onClick={() => setViewingLogsDocId(doc.id)} className="p-2.5 text-blue-500 hover:bg-blue-50 rounded-xl border border-transparent hover:border-blue-200 transition-all"><History className="w-4 h-4" /></button>
+                          <button onClick={() => deleteDocument(doc.id)} className="p-2.5 text-gray-300 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all"><Trash2 className="w-4 h-4" /></button>
                         </div>
                       </td>
                     </tr>
@@ -524,10 +498,57 @@ function App() {
 
       {/* MODAL DE LOGS */}
       {viewingLogsDocId && (
-        <LogViewer 
-          document={documents.find(d => d.id === viewingLogsDocId)!} 
-          onClose={() => setViewingLogsDocId(null)} 
-        />
+        <LogViewer document={documents.find(d => d.id === viewingLogsDocId)!} onClose={() => setViewingLogsDocId(null)} />
+      )}
+
+      {/* MODAL DE CONFIGURAÇÃO SUPABASE */}
+      {showSettings && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-[70] p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
+            <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2 mb-4">
+              <Database className="w-5 h-5 text-orange-500" /> Configuração do Banco de Dados
+            </h3>
+            <p className="text-sm text-gray-600 mb-4">
+              Cole abaixo as credenciais do seu projeto Supabase para habilitar o salvamento em nuvem.
+            </p>
+            <form onSubmit={handleSaveConfig} className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Project URL</label>
+                <input 
+                  type="text" 
+                  value={configUrl}
+                  onChange={(e) => setConfigUrl(e.target.value)}
+                  placeholder="https://xyz.supabase.co"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Anon Public Key</label>
+                <input 
+                  type="password" 
+                  value={configKey}
+                  onChange={(e) => setConfigKey(e.target.value)}
+                  placeholder="eyJhbGc..."
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                  required
+                />
+              </div>
+              <div className="flex gap-2 pt-2">
+                <button type="button" onClick={handleClearConfig} className="px-4 py-2 text-red-600 text-sm font-bold hover:bg-red-50 rounded-lg">
+                  Desconectar
+                </button>
+                <div className="flex-1"></div>
+                <button type="button" onClick={() => setShowSettings(false)} className="px-4 py-2 text-gray-600 text-sm font-bold hover:bg-gray-100 rounded-lg">
+                  Cancelar
+                </button>
+                <button type="submit" className="px-4 py-2 bg-orange-600 text-white text-sm font-bold rounded-lg hover:bg-orange-700">
+                  Salvar e Conectar
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
       )}
     </div>
   );

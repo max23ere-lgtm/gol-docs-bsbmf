@@ -1,36 +1,86 @@
 import { DocumentItem } from '../types';
 import { createClient } from '@supabase/supabase-js';
 
-// --- CONFIGURAÇÃO DE AMBIENTE ---
-// Função segura para pegar variáveis de ambiente (Funciona em Vite e Webpack)
+// --- CONFIGURAÇÃO DE AMBIENTE (GOL BSB) ---
+// Adicionei suas credenciais diretamente aqui para garantir que conecte imediatamente.
+const DEFAULT_URL = "https://tkwysxrflewuvdfwdytj.supabase.co";
+const DEFAULT_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRrd3lzeHJmbGV3dXZkZndkeXRqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njk3MDc0NzUsImV4cCI6MjA4NTI4MzQ3NX0.BYHu13CO0eO7BxJSSDWISJeSGO1U4rsL69Oj20X0WfM";
+
 const getEnv = (key: string) => {
   // @ts-ignore
   if (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env[key]) {
     // @ts-ignore
     return import.meta.env[key];
   }
-  if (typeof process !== 'undefined' && process.env && process.env[key]) {
-    return process.env[key];
-  }
   return '';
 };
 
-const SUPABASE_URL = getEnv('VITE_SUPABASE_URL');
-const SUPABASE_KEY = getEnv('VITE_SUPABASE_KEY');
+// Lógica de Prioridade:
+// 1. Configuração Manual (se alguém mudou na engrenagem)
+// 2. Credenciais Padrão (Suas chaves hardcoded - Garantia de funcionamento)
+let SUPABASE_URL = DEFAULT_URL;
+let SUPABASE_KEY = DEFAULT_KEY;
+
+const manualConfig = localStorage.getItem('gol_supabase_config');
+if (manualConfig) {
+  try {
+    const parsed = JSON.parse(manualConfig);
+    if (parsed.url && parsed.key) {
+      SUPABASE_URL = parsed.url;
+      SUPABASE_KEY = parsed.key;
+    }
+  } catch (e) { console.error(e); }
+} else {
+  // Se não tiver manual, verifica variáveis de ambiente, se não tiver, usa o padrão hardcoded
+  const envUrl = getEnv('VITE_SUPABASE_URL');
+  const envKey = getEnv('VITE_SUPABASE_KEY');
+  if (envUrl && envKey) {
+    SUPABASE_URL = envUrl;
+    SUPABASE_KEY = envKey;
+  }
+}
 
 // Fallback URL (npoint) - Apenas para leitura de teste se o Supabase falhar
 const JSON_API_URL = `https://api.npoint.io/41262d0891510e4c5b6b`;
 
 let supabase: any = null;
 
-if (SUPABASE_URL && SUPABASE_KEY) {
-  supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
-  console.log('✅ Supabase conectado:', SUPABASE_URL);
-} else {
-  console.warn('⚠️ Supabase NÃO configurado. Verifique VITE_SUPABASE_URL e VITE_SUPABASE_KEY.');
-}
+const initSupabase = () => {
+  if (SUPABASE_URL && SUPABASE_KEY) {
+    try {
+      supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+      console.log('✅ Supabase conectado (GOL BSB)');
+      return true;
+    } catch (e) {
+      console.error('Erro ao iniciar Supabase', e);
+      return false;
+    }
+  }
+  return false;
+};
+
+initSupabase();
 
 export const dbService = {
+  
+  /**
+   * Permite salvar as credenciais manualmente via UI
+   */
+  saveCredentials(url: string, key: string) {
+    if (!url || !key) return;
+    localStorage.setItem('gol_supabase_config', JSON.stringify({ url, key }));
+    window.location.reload(); // Recarrega a página para aplicar
+  },
+
+  clearCredentials() {
+    localStorage.removeItem('gol_supabase_config');
+    window.location.reload();
+  },
+
+  isSupabaseConfigured() {
+    return !!supabase;
+  },
+
   /**
    * Busca os documentos.
    */
@@ -60,18 +110,13 @@ export const dbService = {
     // MODO LEGADO (JSON API)
     try {
       console.log('Usando modo legado (Npoint/Local)...');
-      const response = await fetch(JSON_API_URL);
-      if (!response.ok) throw new Error('Npoint off');
-
-      const data = await response.json();
-      if (data && Array.isArray(data)) {
-        localStorage.setItem('gol_docs_cache', JSON.stringify(data));
-        return data;
+      const local = localStorage.getItem('gol_docs_cache');
+      if (local) {
+        return JSON.parse(local);
       }
       return [];
     } catch (error) {
-      const local = localStorage.getItem('gol_docs_cache');
-      return local ? JSON.parse(local) : [];
+      return [];
     }
   },
 
@@ -79,7 +124,7 @@ export const dbService = {
    * Salva os documentos.
    */
   async saveDocuments(docs: DocumentItem[]): Promise<boolean> {
-    // Cache Local de Segurança (Sempre salva localmente primeiro)
+    // Cache Local de Segurança
     localStorage.setItem('gol_docs_cache', JSON.stringify(docs));
 
     // MODO SUPABASE
@@ -93,10 +138,11 @@ export const dbService = {
           .upsert(docs, { onConflict: 'id' });
 
         if (error) {
-          console.error('❌ Erro Supabase UPSERT:', error.message, error.details);
-          // Se o erro for de permissão (RLS), avisa no console
+          console.error('❌ Erro Supabase UPSERT:', error.message);
+          
+          // Tratamento específico para o erro de permissão (RLS)
           if (error.code === '42501') {
-            alert('ERRO DE PERMISSÃO: O banco de dados bloqueou a gravação. Execute o comando SQL de "disable row level security" no Supabase.');
+            alert('⚠️ ERRO DE PERMISSÃO NO BANCO!\n\nVocê precisa rodar o comando SQL para liberar a escrita.\nVá no Supabase > SQL Editor e rode:\n\nalter table public.documents disable row level security;');
           }
           return false;
         }
@@ -109,7 +155,6 @@ export const dbService = {
       }
     }
 
-    console.warn('⚠️ Tentativa de salvar sem Supabase configurado (apenas LocalStorage atualizado).');
-    return false; // Retorna false para mostrar o ícone de erro na UI
+    return false; 
   }
 };
