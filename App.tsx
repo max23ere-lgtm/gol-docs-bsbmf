@@ -21,12 +21,14 @@ import {
   Moon,
   Sun,
   X,
-  ScanLine
+  ScanLine,
+  PieChart
 } from 'lucide-react';
 import { DocumentItem, DocStatus, DocLog, STATUS_LABELS } from './types';
 import { StatusBadge } from './components/StatusBadge';
 import { Infographic } from './components/Infographic';
 import { LogViewer } from './components/LogViewer';
+import { StatsModal } from './components/StatsModal';
 import { dbService } from './services/dbService';
 import { extractDataFromImage } from './services/geminiService';
 
@@ -52,6 +54,7 @@ function App() {
   const [scanInput, setScanInput] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const [viewingLogsDocId, setViewingLogsDocId] = useState<string | null>(null);
+  const [showStatsModal, setShowStatsModal] = useState(false);
 
   // Dark Mode
   const [darkMode, setDarkMode] = useState(() => {
@@ -393,6 +396,14 @@ function App() {
           </div>
 
           <div className="flex items-center gap-3">
+            <button 
+              onClick={() => setShowStatsModal(true)}
+              className="hidden sm:flex items-center gap-2 px-3 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-xl text-xs font-bold transition-all shadow-md shadow-orange-500/20 active:scale-95"
+            >
+               <PieChart className="w-4 h-4" />
+               Relatórios
+            </button>
+
             <button onClick={() => setDarkMode(!darkMode)} className="p-2.5 rounded-xl text-gray-500 hover:bg-gray-100 dark:text-zinc-400 dark:hover:bg-zinc-800 transition-all border border-transparent hover:border-gray-200 dark:hover:border-zinc-700">
                {darkMode ? <Sun className="w-5 h-5 text-yellow-500" /> : <Moon className="w-5 h-5" />}
             </button>
@@ -590,6 +601,11 @@ function App() {
       {/* MODAL DE LOGS */}
       {viewingLogsDocId && (
         <LogViewer document={documents.find(d => d.id === viewingLogsDocId)!} onClose={() => setViewingLogsDocId(null)} />
+      )}
+
+      {/* MODAL DE ESTATÍSTICAS */}
+      {showStatsModal && (
+        <StatsModal documents={documents} onClose={() => setShowStatsModal(false)} />
       )}
 
       {/* MODAL DA CÂMERA (IA) */}
