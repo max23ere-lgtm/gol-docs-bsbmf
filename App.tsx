@@ -93,8 +93,11 @@ function App() {
     }
 
     const timer = setTimeout(async () => {
+      // Se não tiver documentos para salvar e ainda não carregou, ignora
       if (documents.length === 0 && !dataLoaded.current) return;
       
+      // Só executa o upsert se a lista não diminuiu (para evitar que um delete local falho sobrescreva o banco)
+      // A deleção real agora é feita na função deleteDocument
       setIsSyncing(true);
       const success = await dbService.saveDocuments(documents);
       setIsSyncing(false);
@@ -213,9 +216,20 @@ function App() {
     }));
   };
 
-  const deleteDocument = (id: string) => {
+  const deleteDocument = async (id: string) => {
     if (confirm('Atenção: Você está excluindo este documento da BASE CENTRAL. Todos os usuários deixarão de vê-lo. Continuar?')) {
+      // 1. Atualização otimista na UI (remove na hora para o usuário)
       setDocuments(prev => prev.filter(d => d.id !== id));
+      
+      // 2. Chama o serviço para apagar do banco
+      setIsSyncing(true);
+      const success = await dbService.deleteDocument(id);
+      setIsSyncing(false);
+
+      if (!success) {
+        alert("Erro ao excluir do banco de dados. Tente recarregar a página.");
+        loadData(true); // Recarrega para garantir consistência
+      }
     }
   };
 

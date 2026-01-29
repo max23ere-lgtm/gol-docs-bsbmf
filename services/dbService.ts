@@ -121,6 +121,45 @@ export const dbService = {
   },
 
   /**
+   * Remove um documento do banco e do cache local
+   */
+  async deleteDocument(id: string): Promise<boolean> {
+    // 1. Remove do cache local imediatamente
+    const localStr = localStorage.getItem('gol_docs_cache');
+    if (localStr) {
+      try {
+        const localData = JSON.parse(localStr);
+        const newData = localData.filter((d: any) => d.id !== id);
+        localStorage.setItem('gol_docs_cache', JSON.stringify(newData));
+      } catch (e) { console.error('Erro cache local delete', e); }
+    }
+
+    // 2. Remove do Supabase
+    if (supabase) {
+      try {
+        const { error } = await supabase
+          .from('documents')
+          .delete()
+          .eq('id', id);
+
+        if (error) {
+          console.error('❌ Erro Supabase DELETE:', error.message);
+           if (error.code === '42501') {
+             alert('ERRO DE PERMISSÃO AO DELETAR: Rode o comando "disable row level security" no SQL Editor.');
+           }
+          return false;
+        }
+        console.log(`🗑️ Documento ${id} removido do Supabase`);
+        return true;
+      } catch (error) {
+        console.error('Erro crítico Supabase Delete:', error);
+        return false;
+      }
+    }
+    return true; // Se não tem supabase, considera sucesso pois já tirou do local
+  },
+
+  /**
    * Salva os documentos.
    */
   async saveDocuments(docs: DocumentItem[]): Promise<boolean> {
