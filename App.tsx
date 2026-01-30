@@ -7,6 +7,7 @@ import {
   AlertCircle, 
   Trash2, 
   ArrowRight,
+  ArrowLeft,
   History,
   Camera,
   User,
@@ -241,6 +242,74 @@ function App() {
     }));
   };
 
+  // Função auxiliar para determinar o status anterior
+  const getPrevStatus = (currentStatus: DocStatus): DocStatus | null => {
+    switch (currentStatus) {
+      case DocStatus.SCANNER: return DocStatus.CONFERENCE;
+      case DocStatus.ACCEPTANCE: return DocStatus.SCANNER;
+      case DocStatus.SHIPPING: return DocStatus.ACCEPTANCE;
+      case DocStatus.COMPLETED: return DocStatus.SHIPPING;
+      default: return null;
+    }
+  };
+
+  const revertStatus = (doc: DocumentItem) => {
+    // 1. Cenario: Desfazer apontamento de erro ATIVO (Undo imediato)
+    if (doc.hasErrors) {
+      setDocuments(prev => prev.map(d => {
+        if (d.id !== doc.id) return d;
+        const newErrorCount = Math.max(0, d.errorCount - 1);
+        const newLog: DocLog = {
+          timestamp: new Date().toISOString(),
+          action: 'Apontamento de erro cancelado (Undo)',
+          user: currentUser || 'Supervisor'
+        };
+        return { 
+          ...d, 
+          status: DocStatus.CONFERENCE, 
+          hasErrors: false, 
+          errorCount: newErrorCount,
+          logs: [newLog, ...d.logs] 
+        };
+      }));
+      return;
+    }
+
+    // 2. Cenario: Limpar histórico de erros na fase inicial (Clean Slate)
+    // Se está em Conferência, não tem erro ativo, mas tem contagem de erro antiga
+    if (doc.status === DocStatus.CONFERENCE && doc.errorCount > 0) {
+      setDocuments(prev => prev.map(d => {
+        if (d.id !== doc.id) return d;
+        const newErrorCount = Math.max(0, d.errorCount - 1);
+        const newLog: DocLog = {
+          timestamp: new Date().toISOString(),
+          action: 'Registro de erro removido do histórico',
+          user: currentUser || 'Supervisor'
+        };
+        return { 
+          ...d, 
+          errorCount: newErrorCount,
+          logs: [newLog, ...d.logs] 
+        };
+      }));
+      return;
+    }
+
+    // 3. Cenario: Voltar etapa normal do fluxo
+    const prevStatus = getPrevStatus(doc.status);
+    if (!prevStatus) return;
+
+    setDocuments(prev => prev.map(d => {
+      if (d.id !== doc.id) return d;
+      const newLog: DocLog = {
+        timestamp: new Date().toISOString(),
+        action: `Retorno de Etapa: ${STATUS_LABELS[prevStatus]}`,
+        user: currentUser || 'Supervisor'
+      };
+      return { ...d, status: prevStatus, logs: [newLog, ...d.logs] };
+    }));
+  };
+
   const toggleError = (id: string) => {
     setDocuments(prev => prev.map(doc => {
       if (doc.id !== id) return doc;
@@ -256,11 +325,15 @@ function App() {
   };
 
   const deleteDocument = async (id: string) => {
-    if (confirm('Atenção: Você está excluindo este documento da BASE CENTRAL. Continuar?')) {
+    const password = window.prompt("⚠️ AÇÃO DE SEGURANÇA\n\nEsta ação excluirá o documento permanentemente da base de dados.\n\nDigite a SENHA DE ACESSO para confirmar:");
+    
+    if (password === SHARED_ACCESS_KEY) {
       setIsDeleting(true); 
       setDocuments(prev => prev.filter(d => d.id !== id));
       await dbService.deleteDocument(id);
       setIsDeleting(false);
+    } else if (password !== null) {
+      alert("Senha incorreta. A exclusão foi cancelada.");
     }
   };
 
@@ -343,6 +416,14 @@ function App() {
       </div>
     );
   }
+
+  // Verifica se o botão de voltar deve aparecer
+  // 1. Tem status anterior disponivel
+  // 2. OU tem erro ativo
+  // 3. OU está no inicio (Conferencia) mas tem histórico de erros para limpar
+  const canRevert = (doc: DocumentItem) => {
+    return getPrevStatus(doc.status) || doc.hasErrors || (doc.status === DocStatus.CONFERENCE && doc.errorCount > 0);
+  };
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-zinc-950 flex flex-col font-sans transition-colors duration-500 text-gray-800 dark:text-gray-100">
@@ -510,6 +591,13 @@ function App() {
                       </td>
                       <td className="px-8 py-5 whitespace-nowrap">
                         <div className="flex items-center gap-2 flex-wrap">
+                           {/* Botão de Retorno de Etapa / Desfazer */}
+                           {canRevert(doc) && (
+                             <button onClick={() => revertStatus(doc)} className="p-1.5 bg-gray-100 dark:bg-zinc-800 text-gray-500 hover:text-orange-500 rounded-lg border border-gray-200 dark:border-zinc-700 transition-colors" title={doc.hasErrors ? "Desfazer Erro" : (doc.errorCount > 0 && doc.status === DocStatus.CONFERENCE ? "Limpar Histórico de Erros" : "Voltar Etapa Anterior")}>
+                               <ArrowLeft className="w-3.5 h-3.5" />
+                             </button>
+                           )}
+
                            {doc.status === DocStatus.CONFERENCE && (
                              <>
                               <button onClick={() => toggleError(doc.id)} className={`px-3 py-1.5 rounded-lg border text-[10px] font-bold uppercase ${doc.hasErrors ? 'bg-red-500 text-white border-red-500' : 'bg-white dark:bg-zinc-800 text-gray-500 border-gray-200 dark:border-zinc-700 hover:text-red-500'}`}>{doc.hasErrors ? 'Erro Ativo' : 'Reportar'}</button>
@@ -536,7 +624,7 @@ function App() {
                       <td className="px-8 py-5 whitespace-nowrap text-right">
                         <div className="flex items-center gap-1 justify-end">
                            <button onClick={() => setViewingLogsDocId(doc.id)} className="p-2 text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg transition-all"><History className="w-4 h-4" /></button>
-                          <button onClick={() => deleteDocument(doc.id)} className="p-2 text-gray-300 dark:text-zinc-600 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-all"><Trash2 className="w-4 h-4" /></button>
+                          <button onClick={() => deleteDocument(doc.id)} className="p-2 text-gray-300 dark:text-zinc-600 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-all" title="Excluir (Requer Senha)"><Trash2 className="w-4 h-4" /></button>
                         </div>
                       </td>
                     </tr>
