@@ -1,5 +1,7 @@
 {
   "name": "GOL DOCS BSB",
   "description": "Sistema de rastreamento de documentação técnica com recursos de IA para edição e melhoria de digitalizações, focado no fluxo de manutenção da GOL.",
-  "requestFramePermissions": []
+  "requestFramePermissions": [
+    "camera"
+  ]
 }
