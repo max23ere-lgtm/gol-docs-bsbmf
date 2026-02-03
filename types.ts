@@ -1,3 +1,4 @@
+
 export enum DocStatus {
   CONFERENCE = 'CONFERENCE',   // Primeira Conferência
   RETURN = 'RETURN',           // Retorno para Correção
@@ -23,7 +24,9 @@ export interface DocumentItem {
   createdBy: string; // Name of the user who inserted it
   logs: DocLog[];
   imageUrl?: string; // For the scanner phase
-  createdAt: string;
+  createdAt: string; // Data de inserção no sistema
+  originalDate: string; // Data original do documento físico
+  correctionStartedAt?: string; // Data que iniciou a primeira correção
 }
 
 export const STATUS_LABELS: Record<DocStatus, string> = {
