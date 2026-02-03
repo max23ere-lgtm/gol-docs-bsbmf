@@ -28,7 +28,7 @@ export const editDocumentImage = async (base64Image: string, prompt: string): Pr
             },
           },
           {
-            text: `Edite esta imagem de documento técnico da GOL: ${prompt}. Retorne apenas a imagem processada.`,
+            text: `Edite esta imagem de documento técnico: ${prompt}. Retorne apenas a imagem processada.`,
           },
         ],
       },
@@ -48,11 +48,12 @@ export const editDocumentImage = async (base64Image: string, prompt: string): Pr
 
 /**
  * Usa o Gemini 3 Flash para extrair o Barcode ou número da WO de uma imagem.
- * Otimizado para documentos de manutenção da GOL (RTA e FAR).
+ * Otimizado para documentos de manutenção da GOL.
  */
 export const extractDataFromImage = async (base64Image: string): Promise<string | null> => {
   try {
     const ai = getClient();
+    // gemini-3-flash-preview é ideal para OCR rápido e preciso
     const model = 'gemini-3-flash-preview';
 
     const response = await ai.models.generateContent({
@@ -66,37 +67,35 @@ export const extractDataFromImage = async (base64Image: string): Promise<string 
             },
           },
           {
-            text: `Aja como um auditor de documentação técnica da GOL Linhas Aéreas.
-            Sua tarefa é encontrar o número da Work Order (WO) ou Barcode neste documento de manutenção.
+            text: `Aja como um especialista em documentação de manutenção aeronáutica (GOL Linhas Aéreas).
+            Analise esta imagem e extraia o número de identificação principal do documento (Work Order / Barcode).
             
-            DICAS DE LOCALIZAÇÃO:
-            - Geralmente fica no topo do documento ou próximo a um código de barras.
-            - O padrão GOL é um número que começa com 100, 101 ou 200.
-            
-            REGRAS ESTRITAS:
-            1. Procure por uma sequência numérica de 7 a 10 dígitos.
-            2. Priorize números que iniciem em 100, 101 ou 200.
-            3. Ignore números de peças (P/N), números de série (S/N) ou datas.
-            4. Responda APENAS os números encontrados, sem espaços ou letras.
-            5. Se não tiver certeza absoluta, retorne 'null'.`,
+            Regras de Extração:
+            1. Procure por um número de exatamente 9 dígitos.
+            2. O número DEVE começar com os prefixos: 100, 101 ou 200.
+            3. Ignore números de série de peças, datas, prefixos de aeronaves ou outros códigos menores.
+            4. Responda APENAS os dígitos encontrados. Não inclua texto, pontuação ou explicações.
+            5. Se não encontrar nenhum número que siga o padrão de 9 dígitos iniciando em 100/101/200, retorne exatamente a palavra: null`,
           },
         ],
       },
     });
 
+    // Acessa a propriedade .text (getter) conforme as diretrizes
     const resultText = response.text?.trim() || "";
     
     if (!resultText || resultText.toLowerCase().includes('null')) {
+      console.debug("Gemini: Nenhum código válido identificado na imagem.");
       return null;
     }
     
-    // Limpeza: remove tudo que não for número
+    // Limpeza rigorosa: remove qualquer coisa que não seja número (evita markdown, espaços, etc)
     const cleanedDigits = resultText.replace(/\D/g, '');
     
-    // Validação mínima para evitar falsos positivos
+    // Validação final de formato GOL (mínimo 5 dígitos para ser um WO aceitável em casos parciais)
     if (cleanedDigits.length >= 5) {
-        // Se for maior que 9, pega os últimos 9 (comum em leituras de código de barras longo)
-        return cleanedDigits.length > 9 ? cleanedDigits.slice(-9) : cleanedDigits;
+        console.debug("Gemini: Código extraído com sucesso:", cleanedDigits);
+        return cleanedDigits;
     }
     
     return null;
