@@ -27,7 +27,8 @@ import {
   PieChart,
   WifiOff,
   Calendar,
-  Clock
+  Clock,
+  Plus
 } from 'lucide-react';
 import { DocumentItem, DocStatus, DocLog, STATUS_LABELS } from './types';
 import { StatusBadge } from './components/StatusBadge';
@@ -52,6 +53,7 @@ function App() {
   const isFirstLoadDone = useRef(false);
   
   const [scanInput, setScanInput] = useState('');
+  const [ingestionDate, setIngestionDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [searchTerm, setSearchTerm] = useState('');
   const [viewingLogsDocId, setViewingLogsDocId] = useState<string | null>(null);
   const [showStatsModal, setShowStatsModal] = useState(false);
@@ -145,6 +147,8 @@ function App() {
 
     let docType = cleanCode.startsWith('200') ? 'FAR' : 'RTA';
     const now = new Date().toISOString();
+    const selectedOrgDate = ingestionDate ? new Date(ingestionDate).toISOString() : now;
+
     const newDoc: DocumentItem = {
       id: cleanCode,
       type: docType,
@@ -153,10 +157,10 @@ function App() {
       errorCount: 0,
       createdBy: currentUser || 'Desconhecido',
       createdAt: now,
-      originalDate: now,
+      originalDate: selectedOrgDate,
       logs: [{
         timestamp: now,
-        action: 'Cadastrado na base centralizada',
+        action: `Cadastrado na base (Data Original: ${new Date(selectedOrgDate).toLocaleDateString()})`,
         user: currentUser || 'Sistema'
       }]
     };
@@ -170,7 +174,7 @@ function App() {
     const rawInput = scanInput.trim();
     if (!rawInput) return;
     const code = cleanScanCode(rawInput);
-    if (code.length === 9) {
+    if (code.length >= 9) { // Aceita 9 ou mais caracteres do scanner físico
       const isRTA = code.startsWith('100') || code.startsWith('101');
       const isFAR = code.startsWith('200');
       if (isRTA || isFAR) {
@@ -185,14 +189,14 @@ function App() {
     setCameraError('');
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ 
-        video: { facingMode: 'environment' } 
+        video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } } 
       });
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
         videoRef.current.setAttribute('playsinline', 'true');
       }
     } catch (err) {
-      setCameraError('Erro ao acessar a câmera. Verifique as permissões.');
+      setCameraError('Erro ao acessar a câmera. Verifique as permissões do navegador.');
     }
   };
 
@@ -202,6 +206,7 @@ function App() {
       stream.getTracks().forEach(track => track.stop());
     }
     setShowCamera(false);
+    setIsCameraLoading(false);
   };
 
   const captureAndAnalyze = async () => {
@@ -215,20 +220,25 @@ function App() {
       const ctx = canvas.getContext('2d');
       if (ctx) {
         ctx.drawImage(videoRef.current, 0, 0);
-        const base64 = canvas.toDataURL('image/jpeg');
+        // Qualidade 0.9 para garantir nitidez dos números
+        const base64 = canvas.toDataURL('image/jpeg', 0.9);
         const code = await extractDataFromImage(base64);
         if (code) {
           if (navigator.vibrate) navigator.vibrate(200);
           const registered = registerDocument(code);
-          if (registered) stopCamera();
-          else setCameraError(`Código inválido: ${code}`);
+          if (registered) {
+            stopCamera();
+          } else {
+             setCameraError(`Documento ${code} já está na base.`);
+             setTimeout(() => setIsCameraLoading(false), 2000);
+          }
         } else {
-          setCameraError('Não foi possível ler o código. Tente novamente.');
+          setCameraError('IA não identificou um WO GOL. Tente enquadrar melhor o topo do papel.');
+          setIsCameraLoading(false);
         }
       }
     } catch (err) {
-      setCameraError('Erro ao processar imagem.');
-    } finally {
+      setCameraError('Erro de conexão com o servidor de IA.');
       setIsCameraLoading(false);
     }
   };
@@ -292,7 +302,6 @@ function App() {
           action: 'Registro de erro removido do histórico',
           user: currentUser || 'Supervisor'
         };
-        // Limpa a data de início da correção se o histórico for zerado
         const correctionDate = newErrorCount === 0 ? undefined : d.correctionStartedAt;
         return { 
           ...d, 
@@ -324,8 +333,6 @@ function App() {
       const hasErrors = !doc.hasErrors;
       const newStatus = hasErrors ? DocStatus.RETURN : doc.status;
       const now = new Date().toISOString();
-      
-      // Se é o primeiro erro, grava o início da correção
       const firstCorrectionDate = (!doc.correctionStartedAt && hasErrors) ? now : doc.correctionStartedAt;
 
       const newLog: DocLog = {
@@ -468,35 +475,46 @@ function App() {
       <main className="flex-1 max-w-7xl mx-auto w-full p-4 md:p-8 space-y-8">
         <Infographic documents={documents} activeFilter={statusFilter} onFilterStatus={setStatusFilter} />
 
-        <div className="bg-white dark:bg-zinc-900 p-6 rounded-3xl shadow-xl border border-gray-100 dark:border-zinc-800 flex flex-col lg:flex-row gap-8 items-start lg:items-center justify-between">
-          <div className="w-full lg:w-1/3">
-            <label className="block text-xs font-bold text-gray-400 dark:text-zinc-500 uppercase tracking-wider mb-2 ml-1">Scanner Inteligente</label>
-            <div className="flex gap-3">
-              <div className="relative flex-1 group">
-                <ScanLine className="absolute left-4 top-4 h-5 w-5 text-gray-400 group-focus-within:text-orange-500 transition-colors" />
-                <input type="text" autoFocus value={scanInput} onChange={(e) => setScanInput(e.target.value)} className="block w-full pl-12 pr-4 py-3.5 border-2 border-gray-100 dark:border-zinc-700 rounded-2xl bg-gray-50 dark:bg-zinc-800 placeholder-gray-400 dark:text-white focus:outline-none focus:bg-white dark:focus:bg-zinc-800 focus:border-orange-500 sm:text-base transition-all font-mono font-medium shadow-inner" placeholder="Inserir Manual ou Scanner" />
-              </div>
-              <button onClick={startCamera} className="px-5 bg-gray-900 dark:bg-zinc-700 text-white rounded-2xl hover:bg-orange-600 transition-colors flex items-center justify-center"><Camera className="w-6 h-6" /></button>
+        <div className="bg-white dark:bg-zinc-900 p-6 rounded-3xl shadow-xl border border-gray-100 dark:border-zinc-800 flex flex-col lg:flex-row gap-6 items-start lg:items-center">
+          
+          <div className="w-full lg:w-1/4">
+            <label className="block text-[10px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-[0.2em] mb-2 ml-1">Data Original (ORG)</label>
+            <div className="relative group">
+              <Calendar className="absolute left-4 top-3.5 h-4 w-4 text-orange-500 pointer-events-none group-focus-within:scale-110 transition-transform" />
+              <input 
+                type="date" 
+                value={ingestionDate} 
+                onChange={(e) => setIngestionDate(e.target.value)} 
+                className="w-full pl-11 pr-4 py-3 bg-orange-50 dark:bg-orange-500/5 border-2 border-orange-100 dark:border-orange-500/20 rounded-2xl text-sm font-bold text-orange-900 dark:text-orange-400 focus:outline-none focus:border-orange-500 transition-all cursor-pointer"
+              />
             </div>
           </div>
 
-          <div className="w-full lg:w-2/3 flex flex-col md:flex-row gap-4 items-end">
-            <div className="flex gap-3 w-full md:w-auto">
-              <div className="flex-1">
-                <label className="block text-xs font-bold text-gray-400 dark:text-zinc-500 uppercase mb-2 ml-1">Início</label>
-                <input type="date" value={dateStart} onChange={(e) => setDateStart(e.target.value)} className="w-full border-2 border-gray-100 dark:border-zinc-700 dark:bg-zinc-800 dark:text-white rounded-xl px-4 py-3 text-sm focus:border-orange-500 outline-none" />
+          <div className="w-full lg:flex-1">
+            <label className="block text-[10px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-[0.2em] mb-2 ml-1">Scanner ou WO Manual</label>
+            <div className="flex gap-3">
+              <div className="relative flex-1 group">
+                <ScanLine className="absolute left-4 top-4 h-5 w-5 text-gray-400 group-focus-within:text-orange-500 transition-colors" />
+                <input 
+                  type="text" 
+                  autoFocus 
+                  value={scanInput} 
+                  onChange={(e) => setScanInput(e.target.value)} 
+                  className="block w-full pl-12 pr-4 py-3.5 border-2 border-gray-100 dark:border-zinc-700 rounded-2xl bg-gray-50 dark:bg-zinc-800 placeholder-gray-400 dark:text-white focus:outline-none focus:bg-white dark:focus:bg-zinc-800 focus:border-orange-500 sm:text-base transition-all font-mono font-medium shadow-inner" 
+                  placeholder="Bipar Código ou Digitar..." 
+                />
               </div>
-              <div className="flex-1">
-                <label className="block text-xs font-bold text-gray-400 dark:text-zinc-500 uppercase mb-2 ml-1">Fim</label>
-                <input type="date" value={dateEnd} onChange={(e) => setDateEnd(e.target.value)} className="w-full border-2 border-gray-100 dark:border-zinc-700 dark:bg-zinc-800 dark:text-white rounded-xl px-4 py-3 text-sm focus:border-orange-500 outline-none" />
-              </div>
+              <button onClick={startCamera} className="px-5 bg-zinc-900 dark:bg-zinc-700 text-white rounded-2xl hover:bg-orange-600 transition-colors flex items-center justify-center shadow-lg active:scale-95"><Camera className="w-6 h-6" /></button>
             </div>
+          </div>
+
+          <div className="w-full lg:w-1/3 flex flex-col md:flex-row gap-4 items-end">
             <div className="flex-1 w-full">
-              <label className="block text-xs font-bold text-gray-400 dark:text-zinc-500 uppercase mb-2 ml-1">Busca Global</label>
+              <label className="block text-[10px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-[0.2em] mb-2 ml-1">Filtro Global</label>
               <div className="relative">
                 <Filter className="absolute left-4 top-3.5 h-4 w-4 text-gray-400" />
-                <input type="text" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="block w-full pl-11 pr-4 py-3 border-2 border-gray-100 dark:border-zinc-700 rounded-xl bg-white dark:bg-zinc-800 focus:border-orange-500 outline-none text-sm font-medium dark:text-white" placeholder="Pesquisar..." />
-                {statusFilter && <button onClick={() => setStatusFilter(null)} className="absolute inset-y-0 right-3 flex items-center text-[10px] text-orange-600 font-bold hover:underline uppercase tracking-tight">Limpar</button>}
+                <input type="text" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="block w-full pl-11 pr-4 py-3 border-2 border-gray-100 dark:border-zinc-700 rounded-2xl bg-white dark:bg-zinc-800 focus:border-orange-500 outline-none text-sm font-medium dark:text-white" placeholder="Pesquisar WO, Autor..." />
+                {statusFilter && <button onClick={() => setStatusFilter(null)} className="absolute inset-y-0 right-3 flex items-center text-[10px] text-orange-600 font-black hover:underline uppercase tracking-tight">Limpar</button>}
               </div>
             </div>
           </div>
@@ -506,43 +524,44 @@ function App() {
           <div className="px-8 py-6 border-b border-gray-100 dark:border-zinc-800 flex justify-between items-center">
             <div className="flex items-center gap-3">
               <div className="p-2 bg-orange-100 dark:bg-orange-500/20 rounded-lg"><Database className="w-5 h-5 text-orange-600 dark:text-orange-500" /></div>
-              <h2 className="text-lg font-bold text-gray-800 dark:text-white">Repositório BSB</h2>
+              <h2 className="text-lg font-bold text-gray-800 dark:text-white">Base de Dados Centralizada</h2>
             </div>
-            <span className="text-xs font-bold text-gray-400 dark:text-zinc-500 bg-gray-50 dark:bg-zinc-800 px-3 py-1.5 rounded-full">{filteredDocs.length} Resultados</span>
+            <div className="flex gap-2">
+              <div className="flex gap-2 items-center bg-gray-50 dark:bg-zinc-800 px-3 py-1.5 rounded-xl border dark:border-zinc-700">
+                <input type="date" value={dateStart} onChange={(e) => setDateStart(e.target.value)} className="bg-transparent border-none text-[10px] font-bold p-0 w-24 outline-none" placeholder="De" />
+                <span className="text-gray-300">|</span>
+                <input type="date" value={dateEnd} onChange={(e) => setDateEnd(e.target.value)} className="bg-transparent border-none text-[10px] font-bold p-0 w-24 outline-none" placeholder="Até" />
+              </div>
+              <span className="text-xs font-bold text-gray-400 dark:text-zinc-500 bg-gray-100 dark:bg-zinc-800 px-3 py-1.5 rounded-xl border dark:border-zinc-700 flex items-center">{filteredDocs.length} DOCS</span>
+            </div>
           </div>
 
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-gray-100 dark:divide-zinc-800">
               <thead className="hidden md:table-header-group bg-gray-50/50 dark:bg-zinc-800/50">
                 <tr>
-                  <th className="px-8 py-5 text-left text-[10px] font-black text-gray-400 uppercase tracking-widest">Documento</th>
-                  <th className="px-8 py-5 text-left text-[10px] font-black text-gray-400 uppercase tracking-widest">Status</th>
-                  <th className="px-8 py-5 text-left text-[10px] font-black text-gray-400 uppercase tracking-widest">Autor</th>
-                  <th className="px-8 py-5 text-left text-[10px] font-black text-gray-400 uppercase tracking-widest">Datas de Controle</th>
-                  <th className="px-8 py-5 text-left text-[10px] font-black text-gray-400 uppercase tracking-widest">Fluxo</th>
-                  <th className="px-8 py-5 text-right text-[10px] font-black text-gray-400 uppercase tracking-widest">Opções</th>
+                  <th className="px-8 py-5 text-left text-[10px] font-black text-gray-400 uppercase tracking-widest">Documento (WO)</th>
+                  <th className="px-8 py-5 text-left text-[10px] font-black text-gray-400 uppercase tracking-widest">Status / Fluxo</th>
+                  <th className="px-8 py-5 text-left text-[10px] font-black text-gray-400 uppercase tracking-widest">Cronologia de Controle</th>
+                  <th className="px-8 py-5 text-left text-[10px] font-black text-gray-400 uppercase tracking-widest">Alertas / Erros</th>
+                  <th className="px-8 py-5 text-left text-[10px] font-black text-gray-400 uppercase tracking-widest">Ações</th>
+                  <th className="px-8 py-5 text-right text-[10px] font-black text-gray-400 uppercase tracking-widest">Logs</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100 dark:divide-zinc-800 bg-white dark:bg-zinc-900">
                 {filteredDocs.length === 0 ? (
-                  <tr><td colSpan={6} className="px-8 py-16 text-center text-gray-400 dark:text-zinc-600">Nenhum registro encontrado.</td></tr>
+                  <tr><td colSpan={6} className="px-8 py-16 text-center text-gray-400 dark:text-zinc-600 font-medium">Nenhum registro encontrado para os filtros aplicados.</td></tr>
                 ) : (
                   filteredDocs.map((doc) => (
-                    <tr key={doc.id} className="hover:bg-orange-50/30 dark:hover:bg-zinc-800/50 transition-colors group flex flex-col md:table-row">
+                    <tr key={doc.id} className="hover:bg-orange-50/20 dark:hover:bg-zinc-800/30 transition-colors group flex flex-col md:table-row">
                       <td className="px-8 py-5 whitespace-nowrap">
                         <div className="flex items-center">
-                          <div className={`flex-shrink-0 h-10 w-10 rounded-lg flex items-center justify-center font-bold text-[10px] ${doc.type === 'RTA' ? 'bg-blue-600 text-white' : 'bg-indigo-600 text-white'}`}>{doc.type}</div>
+                          <div className={`flex-shrink-0 h-10 w-10 rounded-xl flex items-center justify-center font-black text-[10px] shadow-sm ${doc.type === 'RTA' ? 'bg-blue-600 text-white' : 'bg-indigo-600 text-white'}`}>{doc.type}</div>
                           <div className="ml-4">
-                            <div className="text-sm font-bold text-gray-900 dark:text-white font-mono">{doc.id}</div>
-                            <div className="flex flex-col text-[9px] mt-1 space-y-0.5">
-                               <div className="flex items-center gap-1 text-gray-400 font-bold uppercase tracking-tighter">
-                                 <Calendar className="w-2.5 h-2.5" />
-                                 Org: <input type="date" value={(doc.originalDate || doc.createdAt).split('T')[0]} onChange={(e) => updateDocField(doc.id, 'originalDate', new Date(e.target.value).toISOString())} className="bg-transparent border-none p-0 focus:ring-0 cursor-pointer hover:text-orange-500 font-mono" />
-                               </div>
-                               <div className="flex items-center gap-1 text-gray-300 font-medium">
-                                 <Clock className="w-2.5 h-2.5" />
-                                 Sis: {new Date(doc.createdAt).toLocaleDateString()}
-                               </div>
+                            <div className="text-sm font-black text-gray-900 dark:text-white font-mono tracking-tight">{doc.id}</div>
+                            <div className="flex items-center gap-1.5 mt-1">
+                              <User className="w-2.5 h-2.5 text-gray-400" />
+                              <span className="text-[10px] font-bold text-gray-400 uppercase">{doc.createdBy.split(' ')[0]}</span>
                             </div>
                           </div>
                         </div>
@@ -550,33 +569,66 @@ function App() {
                       <td className="px-8 py-5 whitespace-nowrap">
                          <div className="flex flex-col gap-1.5 items-start">
                            <StatusBadge status={doc.status} />
-                           {doc.hasErrors && <span className="text-[9px] font-black text-red-500 bg-red-50 dark:bg-red-900/20 px-1.5 py-0.5 rounded border border-red-100 dark:border-red-900/30 uppercase">Em Correção</span>}
+                           {doc.hasErrors && (
+                             <div className="flex items-center gap-1 px-2 py-0.5 rounded bg-red-50 dark:bg-red-900/20 border border-red-100 dark:border-red-900/30">
+                               <AlertCircle className="w-3 h-3 text-red-500" />
+                               <span className="text-[9px] font-black text-red-500 uppercase">Correção Pendente</span>
+                             </div>
+                           )}
                          </div>
                       </td>
                       <td className="px-8 py-5 whitespace-nowrap">
-                        <span className="text-xs font-semibold text-gray-600 dark:text-zinc-400 flex items-center gap-2">
-                          <div className="w-6 h-6 rounded-full bg-gray-100 dark:bg-zinc-800 flex items-center justify-center text-[10px] border dark:border-zinc-700 font-bold">{doc.createdBy.charAt(0).toUpperCase()}</div>
-                          {doc.createdBy.split(' ')[0]}
-                        </span>
+                         <div className="flex flex-col gap-2">
+                           <div className="flex items-center gap-2 group/date">
+                             <div className="p-1.5 bg-orange-50 dark:bg-orange-500/10 rounded-lg border border-orange-100 dark:border-orange-500/20">
+                               <Calendar className="w-3 h-3 text-orange-600 dark:text-orange-500" />
+                             </div>
+                             <div>
+                               <p className="text-[8px] font-black text-orange-400 dark:text-orange-600 uppercase leading-none mb-1">Original (ORG)</p>
+                               <input 
+                                 type="date" 
+                                 value={(doc.originalDate || doc.createdAt).split('T')[0]} 
+                                 onChange={(e) => updateDocField(doc.id, 'originalDate', new Date(e.target.value).toISOString())} 
+                                 className="bg-transparent border-none p-0 text-xs font-black text-gray-800 dark:text-gray-200 outline-none focus:ring-0 cursor-pointer hover:text-orange-600" 
+                               />
+                             </div>
+                           </div>
+                           
+                           <div className="flex items-center gap-2">
+                             <div className="p-1.5 bg-blue-50 dark:bg-blue-500/10 rounded-lg border border-blue-100 dark:border-blue-500/20">
+                               <Clock className="w-3 h-3 text-blue-600 dark:text-blue-500" />
+                             </div>
+                             <div>
+                               <p className="text-[8px] font-black text-blue-400 dark:text-blue-600 uppercase leading-none mb-1">Sistema (SIS)</p>
+                               <span className="text-xs font-black text-gray-500 dark:text-gray-400">
+                                 {new Date(doc.createdAt).toLocaleDateString()}
+                               </span>
+                             </div>
+                           </div>
+                         </div>
                       </td>
                       <td className="px-8 py-5 whitespace-nowrap">
                          <div className="flex flex-col gap-1.5">
                             {doc.errorCount > 0 ? (
-                              <div className="flex items-center gap-1.5 text-red-500 text-[10px] font-bold uppercase">
+                              <div className="flex items-center gap-1.5 text-red-500 text-[10px] font-black uppercase bg-red-50 dark:bg-red-900/20 px-2 py-1 rounded-lg border border-red-100 dark:border-red-900/30">
                                 <AlertCircle className="w-3.5 h-3.5" /> 
-                                {doc.errorCount} Erros
+                                {doc.errorCount} Erros Registrados
                               </div>
-                            ) : (<div className="text-gray-300 dark:text-zinc-700 text-xs">-</div>)}
+                            ) : (
+                              <div className="flex items-center gap-1.5 text-green-500 text-[10px] font-black uppercase">
+                                <CheckCircle2 className="w-3.5 h-3.5" /> Limpo
+                              </div>
+                            )}
                             
                             {doc.correctionStartedAt && (
-                               <div className="flex items-center gap-1 text-[9px] text-gray-500 dark:text-zinc-400 font-bold bg-gray-50 dark:bg-zinc-800 p-1 rounded border border-gray-100 dark:border-zinc-700">
-                                 <Calendar className="w-2.5 h-2.5 text-orange-500" />
+                               <div className="flex items-center gap-1.5 text-[9px] text-gray-500 dark:text-zinc-400 font-black bg-gray-50 dark:bg-zinc-800 p-1.5 rounded-lg border border-gray-100 dark:border-zinc-700">
+                                 <Calendar className="w-3 h-3 text-indigo-500" />
                                  Ini. Correção: 
                                  <input 
                                    type="date" 
                                    value={doc.correctionStartedAt.split('T')[0]} 
                                    onChange={(e) => updateDocField(doc.id, 'correctionStartedAt', new Date(e.target.value).toISOString())}
-                                   className="bg-transparent border-none p-0 focus:ring-0 cursor-pointer hover:text-orange-500 ml-1"
+                                   className="bg-transparent border-none p-0 focus:ring-0 cursor-pointer hover:text-orange-500 ml-1 font-mono"
                                  />
                                </div>
                             )}
@@ -584,24 +636,24 @@ function App() {
                       </td>
                       <td className="px-8 py-5 whitespace-nowrap">
                         <div className="flex items-center gap-2 flex-wrap">
-                           {canRevert(doc) && <button onClick={() => revertStatus(doc)} className="p-1.5 bg-gray-100 dark:bg-zinc-800 text-gray-500 hover:text-orange-500 rounded-lg border border-gray-200 dark:border-zinc-700 transition-colors" title={doc.hasErrors ? "Desfazer Erro" : (doc.errorCount > 0 && doc.status === DocStatus.CONFERENCE ? "Limpar Histórico de Erros" : "Voltar Etapa Anterior")}><ArrowLeft className="w-3.5 h-3.5" /></button>}
+                           {canRevert(doc) && <button onClick={() => revertStatus(doc)} className="p-2 bg-gray-100 dark:bg-zinc-800 text-gray-500 hover:text-orange-500 rounded-xl border border-gray-200 dark:border-zinc-700 transition-all active:scale-90" title="Voltar ou Limpar Histórico"><ArrowLeft className="w-4 h-4" /></button>}
                            {doc.status === DocStatus.CONFERENCE && (
                              <>
-                              <button onClick={() => toggleError(doc.id)} className={`px-3 py-1.5 rounded-lg border text-[10px] font-bold uppercase ${doc.hasErrors ? 'bg-red-500 text-white border-red-500' : 'bg-white dark:bg-zinc-800 text-gray-500 border-gray-200 dark:border-zinc-700 hover:text-red-500'}`}>{doc.hasErrors ? 'Erro Ativo' : 'Reportar'}</button>
-                              {!doc.hasErrors && <button onClick={() => updateStatus(doc.id, DocStatus.SCANNER)} className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-[10px] font-bold uppercase">Liberar <ArrowRight className="w-3 h-3" /></button>}
+                              <button onClick={() => toggleError(doc.id)} className={`px-4 py-2 rounded-xl border text-[10px] font-black uppercase tracking-wider shadow-sm transition-all active:scale-95 ${doc.hasErrors ? 'bg-red-500 text-white border-red-500' : 'bg-white dark:bg-zinc-800 text-gray-500 border-gray-200 dark:border-zinc-700 hover:text-red-500'}`}>{doc.hasErrors ? 'Erro Ativo' : 'Reportar Erro'}</button>
+                              {!doc.hasErrors && <button onClick={() => updateStatus(doc.id, DocStatus.SCANNER)} className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-xl text-[10px] font-black uppercase tracking-wider shadow-lg hover:bg-indigo-700 active:scale-95">Liberar <ArrowRight className="w-3.5 h-3.5" /></button>}
                              </>
                            )}
-                           {doc.status === DocStatus.RETURN && <button onClick={() => { toggleError(doc.id); updateStatus(doc.id, DocStatus.CONFERENCE); }} className="flex items-center gap-1.5 px-3 py-1.5 bg-green-600 text-white rounded-lg text-[10px] font-bold uppercase"><CheckCircle2 className="w-3 h-3" /> Corrigido</button>}
-                           {doc.status === DocStatus.SCANNER && <button onClick={() => updateStatus(doc.id, DocStatus.ACCEPTANCE)} className="flex items-center gap-1.5 px-3 py-1.5 bg-purple-600 text-white rounded-lg text-[10px] font-bold uppercase">Digitalizado <ArrowRight className="w-3 h-3" /></button>}
-                           {doc.status === DocStatus.ACCEPTANCE && <button onClick={() => updateStatus(doc.id, DocStatus.SHIPPING)} className="flex items-center gap-1.5 px-3 py-1.5 bg-yellow-500 text-white rounded-lg text-[10px] font-bold uppercase">Aceitar <ArrowRight className="w-3 h-3" /></button>}
-                           {doc.status === DocStatus.SHIPPING && <button onClick={() => updateStatus(doc.id, DocStatus.COMPLETED)} className="flex items-center gap-1.5 px-3 py-1.5 bg-orange-600 text-white rounded-lg text-[10px] font-bold uppercase">Finalizar <CheckCircle2 className="w-3 h-3" /></button>}
-                           {doc.status === DocStatus.COMPLETED && <span className="flex items-center gap-1 text-green-600 dark:text-green-500 font-bold text-[10px] uppercase bg-green-50 dark:bg-green-900/20 px-2 py-1 rounded border border-green-100 dark:border-green-900/30"><CheckCircle2 className="w-3 h-3" /> OK</span>}
+                           {doc.status === DocStatus.RETURN && <button onClick={() => { toggleError(doc.id); updateStatus(doc.id, DocStatus.CONFERENCE); }} className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-xl text-[10px] font-black uppercase tracking-wider shadow-lg hover:bg-green-700 active:scale-95"><CheckCircle2 className="w-3.5 h-3.5" /> Corrigido</button>}
+                           {doc.status === DocStatus.SCANNER && <button onClick={() => updateStatus(doc.id, DocStatus.ACCEPTANCE)} className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-xl text-[10px] font-black uppercase tracking-wider shadow-lg hover:bg-purple-700 active:scale-95">Digitalizar <ArrowRight className="w-3.5 h-3.5" /></button>}
+                           {doc.status === DocStatus.ACCEPTANCE && <button onClick={() => updateStatus(doc.id, DocStatus.SHIPPING)} className="flex items-center gap-2 px-4 py-2 bg-yellow-500 text-white rounded-xl text-[10px] font-black uppercase tracking-wider shadow-lg hover:bg-yellow-600 active:scale-95">Dar Aceite <ArrowRight className="w-3.5 h-3.5" /></button>}
+                           {doc.status === DocStatus.SHIPPING && <button onClick={() => updateStatus(doc.id, DocStatus.COMPLETED)} className="flex items-center gap-2 px-4 py-2 bg-orange-600 text-white rounded-xl text-[10px] font-black uppercase tracking-wider shadow-lg hover:bg-orange-700 active:scale-95">Finalizar <CheckCircle2 className="w-3.5 h-3.5" /></button>}
+                           {doc.status === DocStatus.COMPLETED && <span className="flex items-center gap-2 text-green-600 dark:text-green-400 font-black text-[10px] uppercase bg-green-50 dark:bg-green-900/20 px-3 py-1.5 rounded-xl border border-green-100 dark:border-green-900/30"><CheckCircle2 className="w-4 h-4" /> Arquivado</span>}
                         </div>
                       </td>
                       <td className="px-8 py-5 whitespace-nowrap text-right">
                         <div className="flex items-center gap-1 justify-end">
-                           <button onClick={() => setViewingLogsDocId(doc.id)} className="p-2 text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg transition-all"><History className="w-4 h-4" /></button>
-                          <button onClick={() => deleteDocument(doc.id)} className="p-2 text-gray-300 dark:text-zinc-600 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-all" title="Excluir (Requer Senha)"><Trash2 className="w-4 h-4" /></button>
+                          <button onClick={() => setViewingLogsDocId(doc.id)} className="p-2.5 text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-xl transition-all" title="Ver Histórico"><History className="w-4.5 h-4.5" /></button>
+                          <button onClick={() => deleteDocument(doc.id)} className="p-2.5 text-gray-300 dark:text-zinc-700 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-xl transition-all" title="Excluir Registro"><Trash2 className="w-4.5 h-4.5" /></button>
                         </div>
                       </td>
                     </tr>
@@ -613,10 +665,16 @@ function App() {
         </div>
       </main>
 
-      <footer className="border-t border-gray-200 dark:border-zinc-800 py-8 mt-8 bg-white dark:bg-zinc-900 transition-colors">
-        <div className="max-w-7xl mx-auto px-4 flex flex-col md:flex-row justify-between items-center text-xs text-gray-500 dark:text-zinc-500 gap-4">
-          <div className="font-medium">© {new Date().getFullYear()} GOL Linhas Aéreas - Manutenção BSB</div>
-          <div className="flex items-center gap-1 bg-gray-50 dark:bg-zinc-800 px-3 py-1.5 rounded-full border dark:border-zinc-700">Desenvolvido por <strong className="text-orange-600 dark:text-orange-500">José Augusto Torres</strong> • <a href="mailto:jatgsilva@voegol.com.br" className="hover:text-orange-500 underline">jatgsilva@voegol.com.br</a></div>
+      <footer className="border-t border-gray-200 dark:border-zinc-800 py-10 mt-10 bg-white dark:bg-zinc-900 transition-colors">
+        <div className="max-w-7xl mx-auto px-4 flex flex-col md:flex-row justify-between items-center text-xs text-gray-500 dark:text-zinc-500 gap-6">
+          <div className="font-bold flex items-center gap-2">
+            <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
+            © {new Date().getFullYear()} GOL Linhas Aéreas - Manutenção Centralizada BSB
+          </div>
+          <div className="flex items-center gap-2 bg-gray-50 dark:bg-zinc-800 px-4 py-2 rounded-2xl border dark:border-zinc-700 shadow-inner">
+            <User className="w-3 h-3 text-orange-500" />
+            Desenvolvido por <strong className="text-gray-900 dark:text-white">José Augusto Torres</strong> • <a href="mailto:jatgsilva@voegol.com.br" className="hover:text-orange-500 underline font-black">jatgsilva@voegol.com.br</a>
+          </div>
         </div>
       </footer>
 
@@ -625,7 +683,7 @@ function App() {
 
       {showCamera && (
         <div className="fixed inset-0 bg-black z-[100] flex flex-col items-center justify-center">
-          <div className="absolute top-6 right-6 z-50"><button onClick={stopCamera} className="bg-zinc-800/80 p-3 rounded-full text-white"><X className="w-6 h-6" /></button></div>
+          <div className="absolute top-6 right-6 z-50"><button onClick={stopCamera} className="bg-zinc-800/80 p-3 rounded-full text-white hover:bg-red-500 transition-colors"><X className="w-6 h-6" /></button></div>
           <div className="w-full h-full relative flex items-center justify-center">
             <video ref={videoRef} autoPlay playsInline muted className="max-w-full max-h-full object-cover opacity-90" />
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
@@ -637,11 +695,11 @@ function App() {
                  <div className="absolute top-1/2 left-4 right-4 h-0.5 bg-red-500 shadow-[0_0_10px_rgba(239,68,68,0.8)] animate-pulse"></div>
               </div>
             </div>
-            {isCameraLoading && <div className="absolute inset-0 bg-black/80 flex flex-col items-center justify-center z-50"><Loader2 className="w-16 h-16 text-orange-500 animate-spin mb-6" /><p className="text-white font-bold text-2xl">IA Analisando...</p></div>}
+            {isCameraLoading && <div className="absolute inset-0 bg-black/80 flex flex-col items-center justify-center z-50 animate-in fade-in"><Loader2 className="w-16 h-16 text-orange-500 animate-spin mb-6" /><p className="text-white font-black text-2xl tracking-tighter">Gemini analisando WO...</p><p className="text-zinc-400 text-sm mt-2">Extraindo dados técnicos GOL</p></div>}
           </div>
           <div className="absolute bottom-12 w-full flex flex-col items-center gap-6 z-50 px-6">
-            {cameraError && <div className="bg-red-500/90 text-white px-6 py-3 rounded-xl text-sm font-bold animate-bounce">{cameraError}</div>}
-            <button onClick={captureAndAnalyze} disabled={isCameraLoading} className="w-20 h-20 rounded-full bg-white border-4 border-zinc-200 flex items-center justify-center shadow-2xl active:scale-95 group"><div className="w-16 h-16 bg-orange-600 rounded-full flex items-center justify-center"><Camera className="w-8 h-8 text-white" /></div></button>
+            {cameraError && <div className="bg-red-500 text-white px-6 py-4 rounded-2xl text-sm font-black shadow-xl animate-bounce flex items-center gap-3"><AlertCircle className="w-5 h-5" /> {cameraError}</div>}
+            <button onClick={captureAndAnalyze} disabled={isCameraLoading} className="w-20 h-20 rounded-full bg-white border-4 border-zinc-200 flex items-center justify-center shadow-2xl active:scale-95 group disabled:opacity-50 transition-all"><div className="w-16 h-16 bg-orange-600 rounded-full flex items-center justify-center group-hover:bg-orange-500 transition-colors"><Camera className="w-8 h-8 text-white" /></div></button>
           </div>
         </div>
       )}
