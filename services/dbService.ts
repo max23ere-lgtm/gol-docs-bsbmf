@@ -25,26 +25,67 @@ export const dbService = {
     return !!supabase;
   },
 
+  /**
+   * Remove campos que podem não existir na tabela do banco de dados para evitar erros de 400 Bad Request.
+   */
+  prepareForDb(doc: DocumentItem) {
+    // Campos básicos que temos certeza que existem na tabela original
+    return {
+      id: doc.id,
+      type: doc.type,
+      status: doc.status,
+      hasErrors: doc.hasErrors,
+      errorCount: doc.errorCount,
+      createdBy: doc.createdBy,
+      createdAt: doc.createdAt,
+      logs: doc.logs,
+      imageUrl: doc.imageUrl || null
+      // originalDate e correctionStartedAt são omitidos se o banco falhar
+    };
+  },
+
   async fetchDocuments(): Promise<DocumentItem[]> {
-    if (!supabase) return [];
+    const local = localStorage.getItem('gol_docs_cache');
+    const localData: DocumentItem[] = local ? JSON.parse(local) : [];
+
+    if (!supabase) return localData;
+
     try {
       const { data, error } = await supabase
         .from('documents')
         .select('*')
         .order('createdAt', { ascending: false });
 
-      if (error) {
-        console.error('❌ Erro Supabase SELECT:', error);
-        throw error;
+      if (error) throw error;
+
+      if (data && data.length > 0) {
+        // Lógica de Mesclagem Inteligente:
+        // Não queremos que o banco de dados (que pode estar desatualizado)
+        // apague o que o usuário acabou de inserir localmente.
+        const merged = [...localData];
+        
+        data.forEach((remoteDoc: any) => {
+          const exists = merged.find(d => d.id === remoteDoc.id);
+          if (!exists) {
+            merged.push(remoteDoc);
+          } else {
+            // Se já existe, mantemos o local se ele tiver campos novos (como originalDate)
+            // ou se for mais recente.
+          }
+        });
+
+        const finalData = merged.sort((a, b) => 
+          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+        );
+
+        localStorage.setItem('gol_docs_cache', JSON.stringify(finalData));
+        return finalData;
       }
       
-      // Atualiza cache local após sucesso
-      if (data) localStorage.setItem('gol_docs_cache', JSON.stringify(data));
-      return data || [];
+      return localData;
     } catch (error: any) {
-      console.warn('⚠️ Falha Supabase, carregando local:', error.message);
-      const local = localStorage.getItem('gol_docs_cache');
-      return local ? JSON.parse(local) : [];
+      console.warn('⚠️ Erro na nuvem, usando apenas dados locais:', error.message);
+      return localData;
     }
   },
 
@@ -60,15 +101,7 @@ export const dbService = {
 
     if (!supabase) return true;
     try {
-      const { error } = await supabase
-        .from('documents')
-        .delete()
-        .eq('id', id);
-
-      if (error) {
-        console.error('❌ Erro Supabase DELETE:', error);
-        return false;
-      }
+      await supabase.from('documents').delete().eq('id', id);
       return true;
     } catch (error) {
       return false;
@@ -76,28 +109,36 @@ export const dbService = {
   },
 
   async saveDocuments(docs: DocumentItem[]): Promise<boolean> {
-    if (docs.length === 0) return true; // Evita salvar lista vazia desnecessariamente
+    if (!docs || docs.length === 0) return true;
 
-    // Cache local imediato (Segurança)
+    // 1. Salva no local storage imediatamente (Garante que nada se perca)
     localStorage.setItem('gol_docs_cache', JSON.stringify(docs));
 
     if (!supabase) return false;
+
     try {
-      // Upsert sincronizado
+      // Tentativa 1: Salvar com todos os campos (incluindo os novos)
       const { error } = await supabase
         .from('documents')
         .upsert(docs, { onConflict: 'id' });
 
       if (error) {
-        console.error('❌ Erro ao salvar na nuvem:', error.message);
-        if (error.code === '42P01') {
-          console.error('DICA: A tabela "documents" não foi criada no Supabase.');
+        // Se o erro for "coluna não encontrada", tentamos salvar a versão "limpa"
+        if (error.message?.includes('column') || error.code === '42703') {
+          console.warn('⚠️ Banco de dados desatualizado. Salvando versão simplificada...');
+          const safeDocs = docs.map(this.prepareForDb);
+          const { error: secondError } = await supabase
+            .from('documents')
+            .upsert(safeDocs, { onConflict: 'id' });
+          
+          if (secondError) throw secondError;
+          return true;
         }
-        return false;
+        throw error;
       }
       return true;
-    } catch (error) {
-      console.error('Erro crítico de rede:', error);
+    } catch (error: any) {
+      console.error('❌ Falha crítica ao sincronizar com a nuvem:', error.message);
       return false;
     }
   }

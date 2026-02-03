@@ -86,6 +86,7 @@ function App() {
       setSyncError(false);
       isFirstLoadDone.current = true;
     } catch (err) {
+      console.error("Erro ao carregar dados:", err);
       setSyncError(true);
     } finally {
       if (!silent) setIsLoading(false);
@@ -96,15 +97,17 @@ function App() {
     loadData();
   }, []);
 
+  // Sincronização automática para o banco de dados
   useEffect(() => {
     if (!isFirstLoadDone.current || isLoading || isDeleting) return;
 
+    // Sincroniza mais rápido (1 segundo) para evitar perda de dados se o usuário fechar a aba
     const timer = setTimeout(async () => {
       setIsSyncing(true);
       const success = await dbService.saveDocuments(documents);
       setIsSyncing(false);
       setSyncError(!success);
-    }, 2000);
+    }, 1000);
 
     return () => clearTimeout(timer);
   }, [documents, isLoading, isDeleting]);
@@ -165,7 +168,10 @@ function App() {
       }]
     };
 
-    setDocuments(prev => [newDoc, ...prev]);
+    const newDocs = [newDoc, ...documents];
+    setDocuments(newDocs);
+    // Salva localmente IMEDIATAMENTE antes do debounced sync
+    localStorage.setItem('gol_docs_cache', JSON.stringify(newDocs));
     setScanInput(''); 
     return true;
   };
@@ -174,7 +180,7 @@ function App() {
     const rawInput = scanInput.trim();
     if (!rawInput) return;
     const code = cleanScanCode(rawInput);
-    if (code.length >= 9) { // Aceita 9 ou mais caracteres do scanner físico
+    if (code.length >= 9) {
       const isRTA = code.startsWith('100') || code.startsWith('101');
       const isFAR = code.startsWith('200');
       if (isRTA || isFAR) {
@@ -220,7 +226,6 @@ function App() {
       const ctx = canvas.getContext('2d');
       if (ctx) {
         ctx.drawImage(videoRef.current, 0, 0);
-        // Qualidade 0.9 para garantir nitidez dos números
         const base64 = canvas.toDataURL('image/jpeg', 0.9);
         const code = await extractDataFromImage(base64);
         if (code) {
@@ -457,8 +462,8 @@ function App() {
             <div className="hidden xs:block border-l pl-4 border-gray-200 dark:border-zinc-700">
               <h1 className="text-lg font-black text-gray-800 dark:text-white leading-none tracking-tight">BSB DOCS</h1>
               <div className="flex items-center gap-1.5 mt-0.5">
-                 {isSyncing ? <RefreshCw className="w-3 h-3 text-blue-500 animate-spin" /> : syncError ? <WifiOff className="w-3 h-3 text-red-500" /> : <CloudCheck className="w-3 h-3 text-green-500" />}
-                 <span className={`text-[10px] font-bold uppercase tracking-wide ${syncError ? 'text-red-500' : 'text-gray-400 dark:text-zinc-500'}`}>{isSyncing ? 'Salvando...' : syncError ? 'Erro de Conexão' : 'Dados Sincronizados'}</span>
+                 {isSyncing ? <RefreshCw className="w-3 h-3 text-blue-500 animate-spin" /> : syncError ? <div className="flex items-center gap-1 text-red-500"><WifiOff className="w-3 h-3" /><span className="text-[8px] font-black uppercase">Offline</span></div> : <CloudCheck className="w-3 h-3 text-green-500" />}
+                 <span className={`text-[10px] font-bold uppercase tracking-wide ${syncError ? 'text-red-500' : 'text-gray-400 dark:text-zinc-500'}`}>{isSyncing ? 'Sincronizando...' : syncError ? 'Erro ao Salvar Nuvem' : 'Sincronizado'}</span>
               </div>
             </div>
           </div>
@@ -519,6 +524,13 @@ function App() {
             </div>
           </div>
         </div>
+
+        {syncError && (
+          <div className="bg-red-500/10 border border-red-500/20 p-4 rounded-2xl flex items-center gap-3 text-red-600 dark:text-red-400">
+            <AlertCircle className="w-5 h-5 shrink-0" />
+            <p className="text-xs font-bold">O banco de dados não está respondendo ou está desatualizado. Seus documentos estão salvos **localmente** neste navegador, mas podem não aparecer em outros computadores até a conexão ser reestabelecida.</p>
+          </div>
+        )}
 
         <div className="bg-white dark:bg-zinc-900 shadow-xl rounded-3xl overflow-hidden border border-gray-100 dark:border-zinc-800">
           <div className="px-8 py-6 border-b border-gray-100 dark:border-zinc-800 flex justify-between items-center">
