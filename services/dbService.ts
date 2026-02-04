@@ -7,52 +7,85 @@ const DEFAULT_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS
 
 let supabase: any = null;
 
-const initSupabase = () => {
-  try {
-    supabase = createClient(DEFAULT_URL, DEFAULT_KEY);
-    return true;
-  } catch (e) {
-    console.error('Erro ao iniciar Supabase:', e);
-    return false;
-  }
-};
-
-initSupabase();
+try {
+  supabase = createClient(DEFAULT_URL, DEFAULT_KEY);
+} catch (e) {
+  console.error('Erro ao iniciar Supabase:', e);
+}
 
 export const dbService = {
   
-  isSupabaseConfigured() {
-    return !!supabase;
+  /**
+   * Remove campos novos caso o banco de dados ainda seja antigo.
+   */
+  sanitizeForLegacyDb(doc: DocumentItem) {
+    return {
+      id: doc.id,
+      type: doc.type,
+      status: doc.status,
+      hasErrors: doc.hasErrors,
+      errorCount: doc.errorCount,
+      createdBy: doc.createdBy,
+      createdAt: doc.createdAt,
+      logs: doc.logs, 
+      imageUrl: doc.imageUrl || null
+    };
   },
 
   async fetchDocuments(): Promise<DocumentItem[]> {
-    if (!supabase) return [];
+    const local = localStorage.getItem('gol_docs_cache');
+    let localData: DocumentItem[] = [];
+    try {
+      localData = local ? JSON.parse(local) : [];
+    } catch (e) {
+      localData = [];
+    }
+
+    if (!supabase) return localData;
+
     try {
       const { data, error } = await supabase
         .from('documents')
         .select('*')
         .order('createdAt', { ascending: false });
 
-      if (error) {
-        console.error('❌ Erro Supabase SELECT:', error);
-        throw error;
+      if (error) throw error;
+
+      if (data && data.length > 0) {
+        const merged = [...localData];
+        
+        data.forEach((remoteDoc: any) => {
+          const existsIndex = merged.findIndex(d => d.id === remoteDoc.id);
+          if (existsIndex === -1) {
+            merged.push(remoteDoc);
+          } else {
+            // Se o documento remoto tiver data original e o local não, atualizamos o local
+            if (remoteDoc.originalDate && !merged[existsIndex].originalDate) {
+               merged[existsIndex].originalDate = remoteDoc.originalDate;
+            }
+          }
+        });
+
+        const finalData = merged.sort((a, b) => 
+          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+        );
+
+        localStorage.setItem('gol_docs_cache', JSON.stringify(finalData));
+        return finalData;
       }
       
-      // Atualiza cache local após sucesso
-      if (data) localStorage.setItem('gol_docs_cache', JSON.stringify(data));
-      return data || [];
+      return localData;
     } catch (error: any) {
-      console.warn('⚠️ Falha Supabase, carregando local:', error.message);
-      const local = localStorage.getItem('gol_docs_cache');
-      return local ? JSON.parse(local) : [];
+      console.warn('⚠️ Operando em modo Local/Offline:', error.message);
+      return localData;
     }
   },
 
   async deleteDocument(id: string): Promise<boolean> {
-    const localStr = localStorage.getItem('gol_docs_cache');
-    if (localStr) {
+    const local = localStorage.getItem('gol_docs_cache');
+    if (local) {
       try {
-        const localData = JSON.parse(localStr);
+        const localData = JSON.parse(local);
         const newData = localData.filter((d: any) => d.id !== id);
         localStorage.setItem('gol_docs_cache', JSON.stringify(newData));
       } catch (e) {}
@@ -60,15 +93,7 @@ export const dbService = {
 
     if (!supabase) return true;
     try {
-      const { error } = await supabase
-        .from('documents')
-        .delete()
-        .eq('id', id);
-
-      if (error) {
-        console.error('❌ Erro Supabase DELETE:', error);
-        return false;
-      }
+      await supabase.from('documents').delete().eq('id', id);
       return true;
     } catch (error) {
       return false;
@@ -76,28 +101,39 @@ export const dbService = {
   },
 
   async saveDocuments(docs: DocumentItem[]): Promise<boolean> {
-    if (docs.length === 0) return true; // Evita salvar lista vazia desnecessariamente
+    if (!docs || docs.length === 0) return true;
 
-    // Cache local imediato (Segurança)
+    // 1. Salvamento Local Obrigatório
     localStorage.setItem('gol_docs_cache', JSON.stringify(docs));
 
     if (!supabase) return false;
+
     try {
-      // Upsert sincronizado
+      // TENTATIVA 1: Enviar TUDO (Migração Completa)
+      // Isso tenta salvar originalDate e correctionStartedAt
       const { error } = await supabase
         .from('documents')
         .upsert(docs, { onConflict: 'id' });
 
       if (error) {
-        console.error('❌ Erro ao salvar na nuvem:', error.message);
-        if (error.code === '42P01') {
-          console.error('DICA: A tabela "documents" não foi criada no Supabase.');
+        // Se der erro de coluna não encontrada (código 42703 no Postgres ou mensagem genérica)
+        if (error.code === '42703' || error.message?.includes('column')) {
+           console.warn("⚠️ Schema do banco desatualizado. Tentando salvamento legado...");
+           
+           // TENTATIVA 2: Enviar versão limpa (Fallback)
+           const legacyPayload = docs.map(d => this.sanitizeForLegacyDb(d));
+           const { error: legacyError } = await supabase
+            .from('documents')
+            .upsert(legacyPayload, { onConflict: 'id' });
+            
+           if (legacyError) throw legacyError;
+           return true;
         }
-        return false;
+        throw error;
       }
       return true;
-    } catch (error) {
-      console.error('Erro crítico de rede:', error);
+    } catch (error: any) {
+      console.error('Erro de Sincronização:', error.message);
       return false;
     }
   }
