@@ -29,7 +29,8 @@ import {
   Calendar,
   Clock,
   Plus,
-  CalendarDays
+  CalendarDays,
+  CheckSquare
 } from 'lucide-react';
 import { DocumentItem, DocStatus, DocLog, STATUS_LABELS } from './types';
 import { StatusBadge } from './components/StatusBadge';
@@ -49,6 +50,8 @@ function App() {
   const [loginPasswordInput, setLoginPasswordInput] = useState('');
 
   const [documents, setDocuments] = useState<DocumentItem[]>([]);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  
   const [isLoading, setIsLoading] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncError, setSyncError] = useState(false);
@@ -346,6 +349,36 @@ function App() {
     updateDocuments(updated);
   };
 
+  // --- Lógica de Seleção Múltipla ---
+
+  const toggleSelectOne = (id: string) => {
+    setSelectedIds(prev => 
+      prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id]
+    );
+  };
+
+  const toggleSelectAll = (visibleDocs: DocumentItem[]) => {
+    if (selectedIds.length === visibleDocs.length && visibleDocs.length > 0) {
+      setSelectedIds([]); // Deselect all
+    } else {
+      setSelectedIds(visibleDocs.map(d => d.id)); // Select all visible
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    if (selectedIds.length === 0) return;
+
+    const password = window.prompt(`⚠️ EXCLUSÃO EM MASSA\n\nVocê está prestes a apagar ${selectedIds.length} documentos.\nDigite a SENHA DA EQUIPE para confirmar:`);
+    if (password === SHARED_ACCESS_KEY) {
+      setIsDeleting(true);
+      const updated = documents.filter(d => !selectedIds.includes(d.id));
+      updateDocuments(updated);
+      await dbService.deleteDocuments(selectedIds);
+      setSelectedIds([]);
+      setIsDeleting(false);
+    }
+  };
+
   const deleteDocument = async (id: string) => {
     const password = window.prompt("⚠️ AÇÃO DE SEGURANÇA\n\nDigite a SENHA DA EQUIPE para confirmar a exclusão:");
     if (password === SHARED_ACCESS_KEY) {
@@ -472,7 +505,7 @@ function App() {
         </div>
       </header>
 
-      <main className="flex-1 max-w-7xl mx-auto w-full p-4 md:p-8 space-y-8">
+      <main className="flex-1 max-w-7xl mx-auto w-full p-4 md:p-8 space-y-8 relative pb-24">
         <Infographic documents={documents} activeFilter={statusFilter} onFilterStatus={setStatusFilter} />
 
         <div className="bg-white dark:bg-zinc-900 p-6 rounded-3xl shadow-xl border border-gray-100 dark:border-zinc-800 flex flex-col lg:flex-row gap-6 items-start lg:items-center">
@@ -562,21 +595,37 @@ function App() {
             <table className="min-w-full divide-y divide-gray-100 dark:divide-zinc-800">
               <thead className="hidden md:table-header-group bg-gray-50/50 dark:bg-zinc-800/50">
                 <tr>
-                  <th className="px-8 py-5 text-left text-[10px] font-black text-gray-400 uppercase tracking-widest">WO / Tipo</th>
-                  <th className="px-8 py-5 text-left text-[10px] font-black text-gray-400 uppercase tracking-widest">Status Fluxo</th>
-                  <th className="px-8 py-5 text-left text-[10px] font-black text-gray-400 uppercase tracking-widest">Datas de Controle</th>
-                  <th className="px-8 py-5 text-left text-[10px] font-black text-gray-400 uppercase tracking-widest">Alertas</th>
-                  <th className="px-8 py-5 text-left text-[10px] font-black text-gray-400 uppercase tracking-widest">Controles</th>
-                  <th className="px-8 py-5 text-right text-[10px] font-black text-gray-400 uppercase tracking-widest">Opções</th>
+                  <th className="px-4 py-5 text-center">
+                    <input 
+                      type="checkbox" 
+                      className="w-4 h-4 rounded border-gray-300 text-orange-600 focus:ring-orange-500 cursor-pointer"
+                      checked={filteredDocs.length > 0 && selectedIds.length === filteredDocs.length}
+                      onChange={() => toggleSelectAll(filteredDocs)}
+                    />
+                  </th>
+                  <th className="px-4 py-5 text-left text-[10px] font-black text-gray-400 uppercase tracking-widest">WO / Tipo</th>
+                  <th className="px-4 py-5 text-left text-[10px] font-black text-gray-400 uppercase tracking-widest">Status Fluxo</th>
+                  <th className="px-4 py-5 text-left text-[10px] font-black text-gray-400 uppercase tracking-widest">Datas de Controle</th>
+                  <th className="px-4 py-5 text-left text-[10px] font-black text-gray-400 uppercase tracking-widest">Alertas</th>
+                  <th className="px-4 py-5 text-left text-[10px] font-black text-gray-400 uppercase tracking-widest">Controles</th>
+                  <th className="px-4 py-5 text-right text-[10px] font-black text-gray-400 uppercase tracking-widest">Opções</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100 dark:divide-zinc-800 bg-white dark:bg-zinc-900">
                 {filteredDocs.length === 0 ? (
-                  <tr><td colSpan={6} className="px-8 py-16 text-center text-gray-400 dark:text-zinc-600 font-medium tracking-widest uppercase text-xs">Aguardando novos registros...</td></tr>
+                  <tr><td colSpan={7} className="px-8 py-16 text-center text-gray-400 dark:text-zinc-600 font-medium tracking-widest uppercase text-xs">Aguardando novos registros...</td></tr>
                 ) : (
                   filteredDocs.map((doc) => (
-                    <tr key={doc.id} className="hover:bg-orange-50/20 dark:hover:bg-zinc-800/30 transition-colors group flex flex-col md:table-row">
-                      <td className="px-8 py-5 whitespace-nowrap">
+                    <tr key={doc.id} className={`hover:bg-orange-50/20 dark:hover:bg-zinc-800/30 transition-colors group flex flex-col md:table-row ${selectedIds.includes(doc.id) ? 'bg-orange-50/40 dark:bg-orange-900/10' : ''}`}>
+                      <td className="px-4 py-5 whitespace-nowrap text-center">
+                        <input 
+                          type="checkbox" 
+                          className="w-4 h-4 rounded border-gray-300 text-orange-600 focus:ring-orange-500 cursor-pointer"
+                          checked={selectedIds.includes(doc.id)}
+                          onChange={() => toggleSelectOne(doc.id)}
+                        />
+                      </td>
+                      <td className="px-4 py-5 whitespace-nowrap">
                         <div className="flex items-center">
                           <div className={`flex-shrink-0 h-10 w-10 rounded-xl flex items-center justify-center font-black text-[10px] shadow-sm ${doc.type === 'RTA' ? 'bg-blue-600 text-white' : 'bg-indigo-600 text-white'}`}>{doc.type}</div>
                           <div className="ml-4">
@@ -588,7 +637,7 @@ function App() {
                           </div>
                         </div>
                       </td>
-                      <td className="px-8 py-5 whitespace-nowrap">
+                      <td className="px-4 py-5 whitespace-nowrap">
                          <div className="flex flex-col gap-1.5 items-start">
                            <StatusBadge status={doc.status} />
                            {doc.hasErrors && (
@@ -599,7 +648,7 @@ function App() {
                            )}
                          </div>
                       </td>
-                      <td className="px-8 py-5 whitespace-nowrap">
+                      <td className="px-4 py-5 whitespace-nowrap">
                          <div className="flex flex-col gap-2">
                            
                            {/* Data Original */}
@@ -633,7 +682,7 @@ function App() {
 
                          </div>
                       </td>
-                      <td className="px-8 py-5 whitespace-nowrap">
+                      <td className="px-4 py-5 whitespace-nowrap">
                          <div className="flex flex-col gap-1.5">
                             {doc.errorCount > 0 ? (
                               <div className="flex items-center gap-1.5 text-red-500 text-[10px] font-black uppercase bg-red-50 dark:bg-red-900/20 px-2 py-1 rounded-lg border border-red-100 dark:border-red-900/30">
@@ -646,7 +695,7 @@ function App() {
                             )}
                          </div>
                       </td>
-                      <td className="px-8 py-5 whitespace-nowrap">
+                      <td className="px-4 py-5 whitespace-nowrap">
                         <div className="flex items-center gap-2 flex-wrap">
                            {canRevert(doc) && <button onClick={() => revertStatus(doc)} className="p-2 bg-gray-100 dark:bg-zinc-800 text-gray-500 hover:text-orange-500 rounded-xl border border-gray-200 dark:border-zinc-700 transition-all active:scale-90"><ArrowLeft className="w-4 h-4" /></button>}
                            {doc.status === DocStatus.CONFERENCE && (
@@ -661,7 +710,7 @@ function App() {
                            {doc.status === DocStatus.SHIPPING && <button onClick={() => updateStatus(doc.id, DocStatus.COMPLETED)} className="flex items-center gap-2 px-4 py-2 bg-orange-600 text-white rounded-xl text-[10px] font-black uppercase tracking-wider shadow-lg hover:bg-orange-700 active:scale-95">Finalizar <CheckCircle2 className="w-3.5 h-3.5" /></button>}
                         </div>
                       </td>
-                      <td className="px-8 py-5 whitespace-nowrap text-right">
+                      <td className="px-4 py-5 whitespace-nowrap text-right">
                         <div className="flex items-center gap-1 justify-end">
                           <button onClick={() => setViewingLogsDocId(doc.id)} className="p-2.5 text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-xl transition-all" title="Ver Histórico"><History className="w-4.5 h-4.5" /></button>
                           <button onClick={() => deleteDocument(doc.id)} className="p-2.5 text-gray-300 dark:text-zinc-700 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-xl transition-all" title="Excluir Registro"><Trash2 className="w-4.5 h-4.5" /></button>
@@ -675,6 +724,32 @@ function App() {
           </div>
         </div>
       </main>
+
+      {/* Floating Bulk Actions Bar */}
+      {selectedIds.length > 0 && (
+        <div className="fixed bottom-24 left-1/2 transform -translate-x-1/2 bg-gray-900 text-white px-6 py-4 rounded-full shadow-2xl flex items-center gap-6 z-50 animate-in slide-in-from-bottom-5 fade-in duration-300">
+           <div className="flex items-center gap-3">
+             <div className="bg-orange-500 rounded-full w-8 h-8 flex items-center justify-center font-bold text-sm">
+               {selectedIds.length}
+             </div>
+             <span className="font-medium text-sm">Selecionados</span>
+           </div>
+           <div className="h-6 w-px bg-gray-700"></div>
+           <button 
+             onClick={handleBulkDelete} 
+             className="flex items-center gap-2 text-red-400 hover:text-red-300 font-bold text-sm transition-colors"
+           >
+             <Trash2 className="w-4 h-4" />
+             Excluir em Massa
+           </button>
+           <button 
+             onClick={() => setSelectedIds([])} 
+             className="bg-gray-800 hover:bg-gray-700 p-2 rounded-full transition-colors ml-2"
+           >
+             <X className="w-4 h-4" />
+           </button>
+        </div>
+      )}
 
       <footer className="border-t border-gray-200 dark:border-zinc-800 py-10 mt-10 bg-white dark:bg-zinc-900">
         <div className="max-w-7xl mx-auto px-4 flex flex-col md:flex-row justify-between items-center text-xs text-gray-500 dark:text-zinc-500 gap-6">
