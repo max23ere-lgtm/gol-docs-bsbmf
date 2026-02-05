@@ -101,16 +101,21 @@ export const dbService = {
 
   /**
    * Deleta múltiplos documentos (Bulk Delete)
+   * GARANTIA: Remove do LocalStorage ANTES de tentar o Firebase.
    */
   async deleteDocuments(ids: string[]): Promise<boolean> {
-    // 1. Remove do LocalStorage imediatamente
+    // 1. Remove do LocalStorage imediatamente (CRÍTICO para não voltar ao recarregar)
     const local = localStorage.getItem('gol_docs_cache');
     if (local) {
       try {
         const localData = JSON.parse(local);
+        // Filtra mantendo apenas os que NÃO estão na lista de exclusão
         const newData = localData.filter((d: any) => !ids.includes(d.id));
         localStorage.setItem('gol_docs_cache', JSON.stringify(newData));
-      } catch (e) {}
+        console.log(`🗑️ Removidos ${ids.length} itens do cache local.`);
+      } catch (e) {
+        console.error("Erro ao limpar cache local:", e);
+      }
     }
 
     if (!db) return true;
@@ -125,6 +130,7 @@ export const dbService = {
       });
       
       await batch.commit();
+      console.log("🔥 Removidos do Firebase com sucesso.");
       return true;
     } catch (error) {
       console.error("Erro ao deletar no Firebase:", error);

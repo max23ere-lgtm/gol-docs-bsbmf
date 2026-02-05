@@ -27,6 +27,7 @@ export interface DocumentItem {
   createdAt: string; // Data de inserção no sistema
   originalDate: string; // Data original do documento físico
   correctionStartedAt?: string; // Data que iniciou a primeira correção
+  isInternational?: boolean; // Identifica se é Service Provider/Base Internacional
 }
 
 export const STATUS_LABELS: Record<DocStatus, string> = {

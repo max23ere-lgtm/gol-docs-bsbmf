@@ -6,31 +6,33 @@ import {
   CheckCircle2, 
   AlertCircle, 
   Trash2, 
-  ArrowRight,
-  ArrowLeft,
-  History,
-  Camera,
-  User,
-  LogOut,
-  Filter,
-  ShieldCheck,
-  CloudCheck,
-  CloudOff,
-  RefreshCw,
-  Loader2,
-  Database,
-  Lock,
-  Moon,
-  Sun,
-  X,
-  ScanLine,
-  PieChart,
-  WifiOff,
-  Calendar,
-  Clock,
-  Plus,
-  CalendarDays,
-  CheckSquare
+  ArrowRight, 
+  ArrowLeft, 
+  History, 
+  Camera, 
+  User, 
+  LogOut, 
+  Filter, 
+  ShieldCheck, 
+  CloudCheck, 
+  CloudOff, 
+  RefreshCw, 
+  Loader2, 
+  Database, 
+  Lock, 
+  Moon, 
+  Sun, 
+  X, 
+  ScanLine, 
+  PieChart, 
+  WifiOff, 
+  Calendar, 
+  Clock, 
+  Plus, 
+  CalendarDays, 
+  CheckSquare, 
+  Globe, 
+  Plane
 } from 'lucide-react';
 import { DocumentItem, DocStatus, DocLog, STATUS_LABELS } from './types';
 import { StatusBadge } from './components/StatusBadge';
@@ -59,6 +61,9 @@ function App() {
   const isFirstLoadDone = useRef(false);
   
   const [scanInput, setScanInput] = useState('');
+  // Novo estado para controle de Base Internacional
+  const [isInternationalInput, setIsInternationalInput] = useState(false);
+  
   const [ingestionDate, setIngestionDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [searchTerm, setSearchTerm] = useState('');
   const [viewingLogsDocId, setViewingLogsDocId] = useState<string | null>(null);
@@ -172,9 +177,11 @@ function App() {
       createdBy: currentUser || 'Desconhecido',
       createdAt: now,
       originalDate: selectedOrgDate,
+      // Salva o status internacional selecionado
+      isInternational: isInternationalInput,
       logs: [{
         timestamp: now,
-        action: `Cadastrado na base (Data Original: ${new Date(selectedOrgDate).toLocaleDateString()})`,
+        action: `Cadastrado na base${isInternationalInput ? ' (Internacional)' : ''} (Data Original: ${new Date(selectedOrgDate).toLocaleDateString()})`,
         user: currentUser || 'Sistema'
       }]
     };
@@ -371,8 +378,10 @@ function App() {
     const password = window.prompt(`⚠️ EXCLUSÃO EM MASSA\n\nVocê está prestes a apagar ${selectedIds.length} documentos.\nDigite a SENHA DA EQUIPE para confirmar:`);
     if (password === SHARED_ACCESS_KEY) {
       setIsDeleting(true);
+      // Remove do estado (UI)
       const updated = documents.filter(d => !selectedIds.includes(d.id));
-      updateDocuments(updated);
+      setDocuments(updated); 
+      // Chama o serviço para remover do LocalStorage e Firebase
       await dbService.deleteDocuments(selectedIds);
       setSelectedIds([]);
       setIsDeleting(false);
@@ -383,8 +392,10 @@ function App() {
     const password = window.prompt("⚠️ AÇÃO DE SEGURANÇA\n\nDigite a SENHA DA EQUIPE para confirmar a exclusão:");
     if (password === SHARED_ACCESS_KEY) {
       setIsDeleting(true); 
+      // Remove do estado (UI)
       const updated = documents.filter(d => d.id !== id);
-      updateDocuments(updated);
+      setDocuments(updated);
+      // Chama o serviço para remover do LocalStorage e Firebase
       await dbService.deleteDocument(id);
       setIsDeleting(false);
     }
@@ -402,7 +413,6 @@ function App() {
     
     let matchesDate = true;
     if (dateStart || dateEnd) {
-      // Lógica de Filtro Duplo
       const targetDate = dateFilterMode === 'ORIGINAL' 
         ? (doc.originalDate || doc.createdAt) 
         : doc.createdAt;
@@ -525,7 +535,7 @@ function App() {
 
           <div className="w-full lg:flex-1">
             <label className="block text-[10px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-[0.2em] mb-2 ml-1">Scanner ou WO Manual</label>
-            <div className="flex gap-3">
+            <div className="flex flex-col sm:flex-row gap-3">
               <div className="relative flex-1 group">
                 <ScanLine className="absolute left-4 top-4 h-5 w-5 text-gray-400 group-focus-within:text-orange-500 transition-colors" />
                 <input 
@@ -537,7 +547,20 @@ function App() {
                   placeholder="Bipar Código ou Digitar..." 
                 />
               </div>
-              <button onClick={startCamera} className="px-5 bg-zinc-900 dark:bg-zinc-700 text-white rounded-2xl hover:bg-orange-600 transition-colors flex items-center justify-center shadow-lg active:scale-95"><Camera className="w-6 h-6" /></button>
+              
+              <div className="flex gap-2">
+                {/* Botão para ativar modo Internacional */}
+                <button 
+                  onClick={() => setIsInternationalInput(!isInternationalInput)} 
+                  className={`px-4 rounded-2xl border-2 transition-all flex items-center justify-center gap-2 shadow-sm ${isInternationalInput ? 'bg-blue-600 border-blue-600 text-white' : 'bg-white dark:bg-zinc-800 border-gray-200 dark:border-zinc-700 text-gray-400 hover:border-blue-400'}`}
+                  title="Documento de Base Internacional / Service Provider"
+                >
+                  <Globe className="w-5 h-5" />
+                  <span className="hidden sm:inline text-xs font-bold uppercase">{isInternationalInput ? 'INTL' : 'NAC'}</span>
+                </button>
+
+                <button onClick={startCamera} className="px-5 bg-zinc-900 dark:bg-zinc-700 text-white rounded-2xl hover:bg-orange-600 transition-colors flex items-center justify-center shadow-lg active:scale-95"><Camera className="w-6 h-6" /></button>
+              </div>
             </div>
           </div>
 
@@ -627,9 +650,17 @@ function App() {
                       </td>
                       <td className="px-4 py-5 whitespace-nowrap">
                         <div className="flex items-center">
-                          <div className={`flex-shrink-0 h-10 w-10 rounded-xl flex items-center justify-center font-black text-[10px] shadow-sm ${doc.type === 'RTA' ? 'bg-blue-600 text-white' : 'bg-indigo-600 text-white'}`}>{doc.type}</div>
+                          <div className={`flex-shrink-0 h-10 w-10 rounded-xl flex items-center justify-center font-black text-[10px] shadow-sm relative overflow-hidden ${doc.type === 'RTA' ? 'bg-blue-600 text-white' : 'bg-indigo-600 text-white'}`}>
+                            {doc.type}
+                            {/* Indicador de Internacional (Fundo sutil) */}
+                            {doc.isInternational && <div className="absolute inset-0 bg-blue-400/50 flex items-center justify-center"><Globe className="w-8 h-8 opacity-20" /></div>}
+                          </div>
                           <div className="ml-4">
-                            <div className="text-sm font-black text-gray-900 dark:text-white font-mono tracking-tight">{doc.id}</div>
+                            <div className="flex items-center gap-2">
+                               <div className="text-sm font-black text-gray-900 dark:text-white font-mono tracking-tight">{doc.id}</div>
+                               {/* Ícone de Internacional */}
+                               {doc.isInternational && <span title="Base Internacional / Service Provider"><Globe className="w-3.5 h-3.5 text-blue-500" /></span>}
+                            </div>
                             <div className="flex items-center gap-1.5 mt-1">
                               <User className="w-2.5 h-2.5 text-gray-400" />
                               <span className="text-[10px] font-bold text-gray-400 uppercase">{doc.createdBy.split(' ')[0]}</span>
