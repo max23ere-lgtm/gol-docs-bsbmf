@@ -32,7 +32,8 @@ import {
   CalendarDays, 
   CheckSquare, 
   Globe, 
-  Plane
+  Plane,
+  ShieldAlert
 } from 'lucide-react';
 import { DocumentItem, DocStatus, DocLog, STATUS_LABELS } from './types';
 import { StatusBadge } from './components/StatusBadge';
@@ -61,7 +62,6 @@ function App() {
   const isFirstLoadDone = useRef(false);
   
   const [scanInput, setScanInput] = useState('');
-  // Novo estado para controle de Base Internacional
   const [isInternationalInput, setIsInternationalInput] = useState(false);
   
   const [ingestionDate, setIngestionDate] = useState(() => new Date().toISOString().split('T')[0]);
@@ -74,6 +74,12 @@ function App() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [isCameraLoading, setIsCameraLoading] = useState(false);
   const [cameraError, setCameraError] = useState('');
+
+  // Controle do Modal de Exclusão (Para resolver problema no Android)
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [deleteModalPassword, setDeleteModalPassword] = useState('');
+  const [idsToDelete, setIdsToDelete] = useState<string[]>([]);
+  const [deleteModalError, setDeleteModalError] = useState(false);
 
   // Filtros de Data
   const [dateStart, setDateStart] = useState('');
@@ -177,7 +183,6 @@ function App() {
       createdBy: currentUser || 'Desconhecido',
       createdAt: now,
       originalDate: selectedOrgDate,
-      // Salva o status internacional selecionado
       isInternational: isInternationalInput,
       logs: [{
         timestamp: now,
@@ -356,7 +361,36 @@ function App() {
     updateDocuments(updated);
   };
 
-  // --- Lógica de Seleção Múltipla ---
+  // --- Lógica de Exclusão (Refatorada para Modal) ---
+
+  const openDeleteConfirmation = (ids: string[]) => {
+    setIdsToDelete(ids);
+    setShowDeleteModal(true);
+    setDeleteModalPassword('');
+    setDeleteModalError(false);
+  };
+
+  const executeDelete = async () => {
+    if (deleteModalPassword !== SHARED_ACCESS_KEY) {
+      setDeleteModalError(true);
+      if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
+      return;
+    }
+
+    setIsDeleting(true);
+    setShowDeleteModal(false);
+
+    // Remove do estado (UI) imediatamente
+    const remaining = documents.filter(d => !idsToDelete.includes(d.id));
+    setDocuments(remaining);
+    
+    // Chama o serviço para remover do LocalStorage e Firebase definitivamente
+    await dbService.deleteDocuments(idsToDelete);
+    
+    setSelectedIds(prev => prev.filter(id => !idsToDelete.includes(id)));
+    setIdsToDelete([]);
+    setIsDeleting(false);
+  };
 
   const toggleSelectOne = (id: string) => {
     setSelectedIds(prev => 
@@ -366,38 +400,9 @@ function App() {
 
   const toggleSelectAll = (visibleDocs: DocumentItem[]) => {
     if (selectedIds.length === visibleDocs.length && visibleDocs.length > 0) {
-      setSelectedIds([]); // Deselect all
+      setSelectedIds([]); 
     } else {
-      setSelectedIds(visibleDocs.map(d => d.id)); // Select all visible
-    }
-  };
-
-  const handleBulkDelete = async () => {
-    if (selectedIds.length === 0) return;
-
-    const password = window.prompt(`⚠️ EXCLUSÃO EM MASSA\n\nVocê está prestes a apagar ${selectedIds.length} documentos.\nDigite a SENHA DA EQUIPE para confirmar:`);
-    if (password === SHARED_ACCESS_KEY) {
-      setIsDeleting(true);
-      // Remove do estado (UI)
-      const updated = documents.filter(d => !selectedIds.includes(d.id));
-      setDocuments(updated); 
-      // Chama o serviço para remover do LocalStorage e Firebase
-      await dbService.deleteDocuments(selectedIds);
-      setSelectedIds([]);
-      setIsDeleting(false);
-    }
-  };
-
-  const deleteDocument = async (id: string) => {
-    const password = window.prompt("⚠️ AÇÃO DE SEGURANÇA\n\nDigite a SENHA DA EQUIPE para confirmar a exclusão:");
-    if (password === SHARED_ACCESS_KEY) {
-      setIsDeleting(true); 
-      // Remove do estado (UI)
-      const updated = documents.filter(d => d.id !== id);
-      setDocuments(updated);
-      // Chama o serviço para remover do LocalStorage e Firebase
-      await dbService.deleteDocument(id);
-      setIsDeleting(false);
+      setSelectedIds(visibleDocs.map(d => d.id));
     }
   };
 
@@ -549,7 +554,6 @@ function App() {
               </div>
               
               <div className="flex gap-2">
-                {/* Botão para ativar modo Internacional */}
                 <button 
                   onClick={() => setIsInternationalInput(!isInternationalInput)} 
                   className={`px-4 rounded-2xl border-2 transition-all flex items-center justify-center gap-2 shadow-sm ${isInternationalInput ? 'bg-blue-600 border-blue-600 text-white' : 'bg-white dark:bg-zinc-800 border-gray-200 dark:border-zinc-700 text-gray-400 hover:border-blue-400'}`}
@@ -575,13 +579,6 @@ function App() {
           </div>
         </div>
 
-        {syncError && (
-          <div className="bg-red-500/10 border border-red-500/20 p-4 rounded-2xl flex items-center gap-3 text-red-600 dark:text-red-400 animate-pulse">
-            <AlertCircle className="w-5 h-5 shrink-0" />
-            <p className="text-xs font-bold uppercase tracking-tight">O banco de dados central está offline ou rejeitando conexão. Seus dados estão seguros neste navegador.</p>
-          </div>
-        )}
-
         <div className="bg-white dark:bg-zinc-900 shadow-xl rounded-3xl overflow-hidden border border-gray-100 dark:border-zinc-800">
           <div className="px-8 py-6 border-b border-gray-100 dark:border-zinc-800 flex flex-col md:flex-row justify-between items-center gap-4">
             <div className="flex items-center gap-3">
@@ -589,7 +586,6 @@ function App() {
               <h2 className="text-lg font-bold text-gray-800 dark:text-white">Relatório de WOs BSB</h2>
             </div>
             
-            {/* Controles de Filtro Avançado */}
             <div className="flex flex-col sm:flex-row gap-3 items-center">
               <div className="flex bg-gray-100 dark:bg-zinc-800 rounded-xl p-1 border dark:border-zinc-700">
                  <button 
@@ -652,13 +648,11 @@ function App() {
                         <div className="flex items-center">
                           <div className={`flex-shrink-0 h-10 w-10 rounded-xl flex items-center justify-center font-black text-[10px] shadow-sm relative overflow-hidden ${doc.type === 'RTA' ? 'bg-blue-600 text-white' : 'bg-indigo-600 text-white'}`}>
                             {doc.type}
-                            {/* Indicador de Internacional (Fundo sutil) */}
                             {doc.isInternational && <div className="absolute inset-0 bg-blue-400/50 flex items-center justify-center"><Globe className="w-8 h-8 opacity-20" /></div>}
                           </div>
                           <div className="ml-4">
                             <div className="flex items-center gap-2">
                                <div className="text-sm font-black text-gray-900 dark:text-white font-mono tracking-tight">{doc.id}</div>
-                               {/* Ícone de Internacional */}
                                {doc.isInternational && <span title="Base Internacional / Service Provider"><Globe className="w-3.5 h-3.5 text-blue-500" /></span>}
                             </div>
                             <div className="flex items-center gap-1.5 mt-1">
@@ -681,8 +675,6 @@ function App() {
                       </td>
                       <td className="px-4 py-5 whitespace-nowrap">
                          <div className="flex flex-col gap-2">
-                           
-                           {/* Data Original */}
                            <div className="flex items-center gap-2 group/date">
                              <div className="p-1.5 bg-orange-50 dark:bg-orange-500/10 rounded-lg border border-orange-100 dark:border-orange-500/20">
                                <Calendar className="w-3 h-3 text-orange-600 dark:text-orange-500" />
@@ -697,8 +689,6 @@ function App() {
                                />
                              </div>
                            </div>
-
-                           {/* Data Inserção */}
                            <div className="flex items-center gap-2">
                              <div className="p-1.5 bg-blue-50 dark:bg-blue-500/10 rounded-lg border border-blue-100 dark:border-blue-500/20">
                                <Clock className="w-3 h-3 text-blue-600 dark:text-blue-500" />
@@ -710,7 +700,6 @@ function App() {
                                </span>
                              </div>
                            </div>
-
                          </div>
                       </td>
                       <td className="px-4 py-5 whitespace-nowrap">
@@ -744,7 +733,7 @@ function App() {
                       <td className="px-4 py-5 whitespace-nowrap text-right">
                         <div className="flex items-center gap-1 justify-end">
                           <button onClick={() => setViewingLogsDocId(doc.id)} className="p-2.5 text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-xl transition-all" title="Ver Histórico"><History className="w-4.5 h-4.5" /></button>
-                          <button onClick={() => deleteDocument(doc.id)} className="p-2.5 text-gray-300 dark:text-zinc-700 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-xl transition-all" title="Excluir Registro"><Trash2 className="w-4.5 h-4.5" /></button>
+                          <button onClick={() => openDeleteConfirmation([doc.id])} className="p-2.5 text-gray-300 dark:text-zinc-700 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-xl transition-all" title="Excluir Registro"><Trash2 className="w-4.5 h-4.5" /></button>
                         </div>
                       </td>
                     </tr>
@@ -767,7 +756,7 @@ function App() {
            </div>
            <div className="h-6 w-px bg-gray-700"></div>
            <button 
-             onClick={handleBulkDelete} 
+             onClick={() => openDeleteConfirmation(selectedIds)} 
              className="flex items-center gap-2 text-red-400 hover:text-red-300 font-bold text-sm transition-colors"
            >
              <Trash2 className="w-4 h-4" />
@@ -779,6 +768,59 @@ function App() {
            >
              <X className="w-4 h-4" />
            </button>
+        </div>
+      )}
+
+      {/* Modal de Exclusão Customizado (Garante funcionamento no Android) */}
+      {showDeleteModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[100] p-4 animate-in fade-in duration-200">
+          <div className="bg-white dark:bg-zinc-900 w-full max-w-sm rounded-[2rem] shadow-2xl overflow-hidden border border-gray-100 dark:border-zinc-800 animate-in zoom-in-95 duration-200">
+             <div className="p-8 text-center">
+                <div className="w-20 h-20 bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 rounded-full flex items-center justify-center mx-auto mb-6">
+                   <ShieldAlert className="w-10 h-10" />
+                </div>
+                <h3 className="text-xl font-black text-gray-800 dark:text-white mb-2 uppercase tracking-tight">Ação Crítica</h3>
+                <p className="text-gray-500 dark:text-zinc-400 text-sm font-medium mb-6">
+                  {idsToDelete.length > 1 
+                    ? `Deseja apagar definitivamente os ${idsToDelete.length} documentos selecionados?` 
+                    : `Deseja apagar definitivamente o documento ${idsToDelete[0]}?`
+                  }
+                  <br/><span className="text-[10px] font-bold text-red-500 uppercase mt-2 block">Isso limpará os dados do seu celular e da nuvem.</span>
+                </p>
+                
+                <div className="space-y-4">
+                  <div className="relative group">
+                    <Lock className="absolute left-4 top-3.5 h-4 w-4 text-gray-400 group-focus-within:text-orange-500 transition-colors" />
+                    <input 
+                      type="password" 
+                      autoFocus
+                      value={deleteModalPassword}
+                      onChange={(e) => setDeleteModalPassword(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && executeDelete()}
+                      className={`w-full pl-11 pr-4 py-3 bg-gray-50 dark:bg-zinc-800 border-2 rounded-2xl outline-none text-sm font-bold transition-all ${deleteModalError ? 'border-red-500 animate-shake' : 'border-gray-100 dark:border-zinc-700 focus:border-orange-500'}`}
+                      placeholder="Senha da Equipe"
+                    />
+                  </div>
+                  
+                  {deleteModalError && <p className="text-[10px] font-black text-red-500 uppercase tracking-wider">Senha Incorreta</p>}
+
+                  <div className="flex gap-3 pt-2">
+                    <button 
+                      onClick={() => setShowDeleteModal(false)}
+                      className="flex-1 px-4 py-3.5 bg-gray-100 dark:bg-zinc-800 text-gray-500 dark:text-zinc-400 font-bold rounded-2xl hover:bg-gray-200 transition-colors text-sm"
+                    >
+                      Cancelar
+                    </button>
+                    <button 
+                      onClick={executeDelete}
+                      className="flex-1 px-4 py-3.5 bg-red-600 text-white font-bold rounded-2xl hover:bg-red-700 transition-colors text-sm shadow-lg shadow-red-500/20"
+                    >
+                      Excluir
+                    </button>
+                  </div>
+                </div>
+             </div>
+          </div>
         </div>
       )}
 

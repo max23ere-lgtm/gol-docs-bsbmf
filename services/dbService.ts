@@ -61,31 +61,40 @@ export const dbService = {
         remoteData.push(doc.data() as DocumentItem);
       });
 
-      if (remoteData.length > 0) {
-        // 3. Mesclagem Inteligente (Merge)
-        const merged = [...localData];
-        
-        remoteData.forEach((remoteDoc) => {
-          const index = merged.findIndex(d => d.id === remoteDoc.id);
-          
-          if (index === -1) {
-            merged.push(remoteDoc);
-          } else {
-            // Atualiza local com dados da nuvem (fonte da verdade)
-            merged[index] = { ...merged[index], ...remoteDoc };
-          }
-        });
-
-        // Ordena por data de criação
-        const finalData = merged.sort((a, b) => 
-          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-        );
-
-        localStorage.setItem('gol_docs_cache', JSON.stringify(finalData));
-        return finalData;
-      }
+      // 3. Mesclagem Inteligente (Merge)
+      // Se tiver dados na nuvem, eles são a fonte da verdade.
+      // Contudo, se algo foi excluído localmente e ainda está na nuvem (delay),
+      // precisamos garantir que não "volte".
       
-      return localData;
+      // Criamos um mapa de dados remotos para busca rápida
+      const remoteMap = new Map(remoteData.map(d => [d.id, d]));
+      
+      // O merge deve priorizar a nuvem para o que EXISTE, 
+      // mas o que não está na nuvem PODE ser um item novo local não sincronizado.
+      // IMPORTANTE: Para evitar itens excluídos voltarem, o deleteDocument deve ser definitivo.
+      
+      const finalData = [...remoteData];
+      
+      // Adicionamos itens locais que ainda não estão na nuvem (novos registros)
+      localData.forEach(localDoc => {
+        if (!remoteMap.has(localDoc.id)) {
+           // Checa se o item é muito antigo ou se foi acabado de criar
+           // Se for novo (últimos 5 min), assume que ainda está subindo
+           const createdAt = new Date(localDoc.createdAt).getTime();
+           const now = new Date().getTime();
+           if (now - createdAt < 300000) { // 5 minutos
+             finalData.push(localDoc);
+           }
+        }
+      });
+
+      // Ordena por data de criação
+      const sortedData = finalData.sort((a, b) => 
+        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+      );
+
+      localStorage.setItem('gol_docs_cache', JSON.stringify(sortedData));
+      return sortedData;
     } catch (error: any) {
       console.warn('⚠️ Erro de conexão com Firebase (Usando dados locais):', error.message);
       return localData;
@@ -101,15 +110,14 @@ export const dbService = {
 
   /**
    * Deleta múltiplos documentos (Bulk Delete)
-   * GARANTIA: Remove do LocalStorage ANTES de tentar o Firebase.
+   * GARANTIA: Remove do LocalStorage ANTES de qualquer ação de rede.
    */
   async deleteDocuments(ids: string[]): Promise<boolean> {
-    // 1. Remove do LocalStorage imediatamente (CRÍTICO para não voltar ao recarregar)
+    // 1. Limpeza agressiva e imediata do LocalStorage (Síncrono)
     const local = localStorage.getItem('gol_docs_cache');
     if (local) {
       try {
         const localData = JSON.parse(local);
-        // Filtra mantendo apenas os que NÃO estão na lista de exclusão
         const newData = localData.filter((d: any) => !ids.includes(d.id));
         localStorage.setItem('gol_docs_cache', JSON.stringify(newData));
         console.log(`🗑️ Removidos ${ids.length} itens do cache local.`);
@@ -121,7 +129,7 @@ export const dbService = {
     if (!db) return true;
 
     try {
-      // 2. Remove do Firebase usando Batch Write
+      // 2. Remove do Firebase usando Batch Write para atomicidade
       const batch = writeBatch(db);
       
       ids.forEach(id => {
@@ -134,6 +142,7 @@ export const dbService = {
       return true;
     } catch (error) {
       console.error("Erro ao deletar no Firebase:", error);
+      // Mesmo com erro no Firebase, os dados locais já foram limpos.
       return false;
     }
   },
@@ -142,7 +151,7 @@ export const dbService = {
    * Salva/Sincroniza documentos
    */
   async saveDocuments(docs: DocumentItem[]): Promise<boolean> {
-    if (!docs || docs.length === 0) return true;
+    if (!docs) return true;
 
     // 1. Salvamento Local Obrigatório
     localStorage.setItem('gol_docs_cache', JSON.stringify(docs));
@@ -153,7 +162,7 @@ export const dbService = {
       const batch = writeBatch(db);
       let count = 0;
       
-      // Limita a 400 operações para segurança (limite do Firestore é 500)
+      // Limita a 400 operações por sincronização (limite Firestore é 500)
       const docsToSync = docs.slice(0, 400); 
 
       for (const d of docsToSync) {
